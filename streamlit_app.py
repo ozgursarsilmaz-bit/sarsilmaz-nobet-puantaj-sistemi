@@ -13,6 +13,29 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+# --- ŞİFRE KORUMASI ---
+SIFRE = "Sars.2026"  # İstediğiniz şifreyi buraya yazabilirsiniz
+
+if "authenticated" not in st.session_state:
+  st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+  st.sidebar.title("🔒 Giriş Yap")
+  girilen_sifre = st.sidebar.text_input(
+      "Uygulama Şifresi", type="password", key="password_input"
+  )
+
+  if st.sidebar.button("Giriş"):
+    if girilen_sifre == SIFRE:
+      st.session_state["authenticated"] = True
+      st.rerun()
+    else:
+      st.sidebar.error("❌ Hatalı şifre!")
+
+  st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
+  st.stop()  # Şifre doğru girilmeden uygulamanın geri kalanı yüklenmez
+
+# --- ŞİFRE DOĞRUYSA SİSTEM BURADAN DEVAM EDER ---
 
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
