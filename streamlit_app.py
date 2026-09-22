@@ -146,7 +146,7 @@ _, gun_sayisi = calendar.monthrange(yil, ay)
 
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
-    value="DURMUŞ AKTÜRK\nHÜMEYRA YEŞİLTAŞ\nKADRİYE ARDIÇ\nMEHMET BAĞCI\nMELEK AKKAŞ\nMUSTAFA TOSUN\nMÜCELLÂ MANTAR\nÖZTÜRK MAVİŞ\nREMZİYE AKSOY\nŞENGÜL URLU\nŞÜKRAN KAYA",
+    value="ÖZGÜR SARSILMAZ",
     height=280,
 )
 personeller = [p.strip().upper() for p in personel_input.split("\n") if p.strip()]
