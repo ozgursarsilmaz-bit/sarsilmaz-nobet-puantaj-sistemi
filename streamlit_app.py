@@ -16,27 +16,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ŞİFRE KORUMASI ---
-SIFRE = "Sars.2026"  # İstediğiniz şifreyi buraya yazabilirsiniz
+# --- ŞİFRE VE GÜVENLİK AYARLARI (OPSİYONEL) ---
+SIFRE = "Sars.2026"
 
-if "authenticated" not in st.session_state:
-  st.session_state["authenticated"] = False
+st.sidebar.title("⚙️ Yönetim Paneli")
 
-if not st.session_state["authenticated"]:
-  st.sidebar.title("🔒 Giriş Yap")
-  girilen_sifre = st.sidebar.text_input(
-      "Uygulama Şifresi", type="password", key="password_input"
-  )
+# Şifre Koruması Açma/Kapama Kutusu (Varsayılan: False / Kapalı)
+sifre_aktif = st.sidebar.checkbox(
+    "🔒 Şifre Korumasını Aktif Et",
+    value=False,
+    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
+)
 
-  if st.sidebar.button("Giriş"):
-    if girilen_sifre == SIFRE:
-      st.session_state["authenticated"] = True
-      st.rerun()
-    else:
-      st.sidebar.error("❌ Hatalı şifre!")
+if sifre_aktif:
+  if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
-  st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
-  st.stop()  # Şifre doğru girilmeden uygulamanın geri kalanı yüklenmez
+  if not st.session_state["authenticated"]:
+    girilen_sifre = st.sidebar.text_input(
+        "Uygulama Şifresi", type="password", key="password_input"
+    )
+
+    if st.sidebar.button("Giriş Yap"):
+      if girilen_sifre == SIFRE:
+        st.session_state["authenticated"] = True
+        st.rerun()
+      else:
+        st.sidebar.error("❌ Hatalı şifre!")
+
+    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
+    st.stop()
+else:
+  # Şifre koruması kapalıysa doğrudan oturum açılmış sayılır
+  st.session_state["authenticated"] = True
 
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
