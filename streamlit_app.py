@@ -271,41 +271,73 @@ gecmis_istatistik = {}
 if uploaded_file is not None:
   try:
     xls = pd.ExcelFile(uploaded_file)
-    df_gecmis = pd.read_excel(xls, sheet_name=0)
 
-    col_mapping = {}
-    for col in df_gecmis.columns:
-      norm_key = tr_norm(col)
-      col_mapping[norm_key] = col
+    # Öncelik: uygulamanın kendi ürettiği "İstatistik & Mesai Yükü" sekmesi.
+    # Eski/manuel Excel dosyalarında ise ilk sekmedeki düz gün sütunları desteklenir.
+    if "İstatistik & Mesai Yükü" in xls.sheet_names:
+      df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü", header=[0, 1])
+      day_names = [
+          "Pazartesi", "Salı", "Çarşamba", "Perşembe",
+          "Cuma", "Cumartesi", "Pazar"
+      ]
 
-    name_col = df_gecmis.columns[0]
+      for _, row in df_gecmis.iterrows():
+        p_name = str(row.iloc[0]).strip().upper()
+        if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL", "NAN"]:
+          continue
 
-    for _, row in df_gecmis.iterrows():
-      p_name = str(row[name_col]).strip().upper()
-      if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL"]:
-        continue
-
-      p_dict = {}
-      for g in [
-          "Pazartesi",
-          "Salı",
-          "Çarşamba",
-          "Perşembe",
-          "Cuma",
-          "Cumartesi",
-          "Pazar",
-      ]:
-        g_norm = tr_norm(g)
-        if g_norm in col_mapping:
-          try:
-            val = int(row[col_mapping[g_norm]])
-          except (ValueError, TypeError):
-            val = 0
-        else:
+        p_dict = {}
+        for g in day_names:
           val = 0
-        p_dict[g] = val
+          # Devir sütununu al; yoksa Toplam-Bu Ay üzerinden geri hesapla.
+          for col in df_gecmis.columns:
+            if isinstance(col, tuple) and tr_norm(col[0]) == tr_norm(g):
+              sub = tr_norm(col[1])
+              if sub == "devir":
+                try:
+                  val = int(row[col]) if pd.notna(row[col]) else 0
+                except (ValueError, TypeError):
+                  val = 0
+                break
+          p_dict[g] = val
 
-      gecmis_istatistik[p_name] = p_dict
+        gecmis_istatistik[p_name] = p_dict
+
+    else:
+      df_gecmis = pd.read_excel(xls, sheet_name=0)
+      col_mapping = {}
+      for col in df_gecmis.columns:
+        norm_key = tr_norm(col)
+        col_mapping[norm_key] = col
+
+      name_col = df_gecmis.columns[0]
+
+      for _, row in df_gecmis.iterrows():
+        p_name = str(row[name_col]).strip().upper()
+        if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL", "NAN"]:
+          continue
+
+        p_dict = {}
+        for g in [
+            "Pazartesi",
+            "Salı",
+            "Çarşamba",
+            "Perşembe",
+            "Cuma",
+            "Cumartesi",
+            "Pazar",
+        ]:
+          g_norm = tr_norm(g)
+          if g_norm in col_mapping:
+            try:
+              val = int(row[col_mapping[g_norm]]) if pd.notna(row[col_mapping[g_norm]]) else 0
+            except (ValueError, TypeError):
+              val = 0
+          else:
+            val = 0
+          p_dict[g] = val
+
+        gecmis_istatistik[p_name] = p_dict
 
     st.sidebar.success(
         f"✅ {len(gecmis_istatistik)} personelin devir verileri yüklendi!"
@@ -568,6 +600,16 @@ def generate_3_tab_excel(
   c_tnb.alignment = align_center
   c_tnb.border = border_cell
 
+  col_counter += 1
+  ws2.merge_cells(
+      start_row=1, start_column=col_counter, end_row=2, end_column=col_counter
+  )
+  c_kum = ws2.cell(row=1, column=col_counter, value="DEVİR+BU AY")
+  c_kum.font = font_header
+  c_kum.fill = fill_header
+  c_kum.alignment = align_center
+  c_kum.border = border_cell
+
   for r_idx in [1, 2]:
     for c_idx in range(1, col_counter + 1):
       ws2.cell(row=r_idx, column=c_idx).border = border_cell
@@ -610,6 +652,16 @@ def generate_3_tab_excel(
     cell_nobet.font = font_bold
     cell_nobet.alignment = align_center
     cell_nobet.border = border_cell
+
+    cell_kum = ws2.cell(
+        row=p_idx,
+        column=c_i + 2,
+        value=sum(gecmis_istatistik.get(p, {}).get(g, 0) for g in gunler_listesi)
+        + bu_ay_toplam_nobet,
+    )
+    cell_kum.font = font_bold
+    cell_kum.alignment = align_center
+    cell_kum.border = border_cell
 
   ws2.column_dimensions["A"].width = 25
 
@@ -749,15 +801,15 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1)) <= 1
         )
 
-    # DİNAMİK PERŞEMBE - PAZAR YASAĞI
+    # PERŞEMBE -> AYNI HAFTANIN PAZARI YASAĞI
     if persembe_pazar_yasagi:
       for d in range(gun_sayisi - 3):
-        if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
+        if datetime.date(yil, ay, d + 1).weekday() == 3:
           for p in personeller:
             if p not in esnek_personel:
               model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
-    # KİŞİLER ARASI ÖZEL MESAFE KURALLARI
+    # KİŞİLER ARASI ÖZEL MESAFE / ÇAKIŞMA KURALLARI
     for rule in kisi_kisitlari:
       p1 = rule["ana"]
       aralik = rule["aralik"]
@@ -779,18 +831,14 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
     pazar_indeksleri = gun_kategorisi_indeksleri([6])
 
-    # CUMA / CUMARTESİ / PAZAR TEKİL MAKSİMUM 1 NÖBET KURALI
+    # CUMA / CUMARTESİ / PAZAR AYRI AYRI EN FAZLA 1
     if cuma_haftasonu_siki_kural:
       for p in personeller:
-        cuma_sayisi = sum(x[(p, d)] for d in cuma_indeksleri)
-        cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
-        pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
+        model.Add(sum(x[(p, d)] for d in cuma_indeksleri) <= 1)
+        model.Add(sum(x[(p, d)] for d in cumartesi_indeksleri) <= 1)
+        model.Add(sum(x[(p, d)] for d in pazar_indeksleri) <= 1)
 
-        # Her kişiye ayda en fazla 1 Cuma, 1 Cumartesi ve 1 Pazar yazılabilir
-        model.Add(cuma_sayisi <= 1)
-        model.Add(cumartesi_sayisi <= 1)
-        model.Add(pazar_sayisi <= 1)
-
+    # Nöbet saatleri
     gun_saatleri = []
     for d in range(gun_sayisi):
       w = datetime.date(yil, ay, d + 1).weekday()
@@ -802,29 +850,69 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         h = 24
       gun_saatleri.append(h)
 
+    # ------------------------------------------------------------------
+    # ADALET OPTİMİZASYONU
+    # 1) BU AY TOPLAM NÖBET SAATİ FARKI: mutlak birinci öncelik
+    # 2) BU AY TOPLAM NÖBET GÜNÜ FARKI
+    # 3) DEVİR + BU AY TOPLAM NÖBET GÜNÜ FARKI
+    # 4) DEVİR + BU AY GÜN TİPİ DAĞILIMI farkları
+    #
+    # Böylece önce saat yükü, sonra nöbet sayısı, sonra geçmiş aydan gelen
+    # yükün telafisi optimize edilir. Gün tipi dengelemesi son aşamadır.
+    # ------------------------------------------------------------------
+
     max_bu_ay_saat = model.NewIntVar(0, 1000, "max_bu_ay_saat")
     min_bu_ay_saat = model.NewIntVar(0, 1000, "min_bu_ay_saat")
+    saat_vars = {}
 
     for p in personeller:
-      bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
-      model.Add(
-          bu_ay_saat
-          == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi))
-      )
-      model.Add(bu_ay_saat <= max_bu_ay_saat)
-      model.Add(bu_ay_saat >= min_bu_ay_saat)
+      saat = model.NewIntVar(0, 1000, f"saat_{p}")
+      model.Add(saat == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi)))
+      saat_vars[p] = saat
+      model.Add(saat <= max_bu_ay_saat)
+      model.Add(saat >= min_bu_ay_saat)
 
     saat_farki = model.NewIntVar(0, 1000, "saat_farki")
     model.Add(saat_farki == max_bu_ay_saat - min_bu_ay_saat)
 
+    max_bu_ay_gun = model.NewIntVar(0, gun_sayisi, "max_bu_ay_gun")
+    min_bu_ay_gun = model.NewIntVar(0, gun_sayisi, "min_bu_ay_gun")
+    bu_ay_gun_vars = {}
+
+    for p in personeller:
+      gun = model.NewIntVar(0, gun_sayisi, f"gun_{p}")
+      model.Add(gun == sum(x[(p, d)] for d in range(gun_sayisi)))
+      bu_ay_gun_vars[p] = gun
+      model.Add(gun <= max_bu_ay_gun)
+      model.Add(gun >= min_bu_ay_gun)
+
+    gun_farki = model.NewIntVar(0, gun_sayisi, "gun_farki")
+    model.Add(gun_farki == max_bu_ay_gun - min_bu_ay_gun)
+
+    max_kumulatif_gun = model.NewIntVar(0, 200, "max_kumulatif_gun")
+    min_kumulatif_gun = model.NewIntVar(0, 200, "min_kumulatif_gun")
+    kumulatif_gun_vars = {}
+
+    for p in personeller:
+      prev_total = sum(get_prev(p, g) for g in gun_saat_haritasi)
+      kum_gun = model.NewIntVar(0, 200, f"kumulatif_gun_{p}")
+      model.Add(kum_gun == prev_total + bu_ay_gun_vars[p])
+      kumulatif_gun_vars[p] = kum_gun
+      model.Add(kum_gun <= max_kumulatif_gun)
+      model.Add(kum_gun >= min_kumulatif_gun)
+
+    kumulatif_gun_farki = model.NewIntVar(0, 200, "kumulatif_gun_farki")
+    model.Add(kumulatif_gun_farki == max_kumulatif_gun - min_kumulatif_gun)
+
+    # Gün tipi dağılımı: geçmiş devir + bu ay toplamı mümkün olduğunca dengeli.
     kategoriler = {
-        "Pazartesi": ([0], 500),
-        "Salı": ([1], 500),
-        "Çarşamba": ([2], 500),
-        "Perşembe": ([3], 1000),
-        "Cuma": ([4], 1500),
-        "Cumartesi": ([5], 2500),
-        "Pazar": ([6], 2000),
+        "Pazartesi": ([0], 1),
+        "Salı": ([1], 1),
+        "Çarşamba": ([2], 1),
+        "Perşembe": ([3], 1),
+        "Cuma": ([4], 1),
+        "Cumartesi": ([5], 1),
+        "Pazar": ([6], 1),
     }
 
     kategori_farklari = []
@@ -834,19 +922,493 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       min_kat = model.NewIntVar(0, 100, f"min_{kat_adi}")
 
       for p in personeller:
-        bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
-        kumulatif_kat_sayisi = get_prev(p, kat_adi) + bu_ay_kat_sayisi
-        model.Add(kumulatif_kat_sayisi <= max_kat)
-        model.Add(kumulatif_kat_sayisi >= min_kat)
+        kumulatif_kat = get_prev(p, kat_adi) + sum(x[(p, d)] for d in day_indices)
+        model.Add(kumulatif_kat <= max_kat)
+        model.Add(kumulatif_kat >= min_kat)
 
       fark = model.NewIntVar(0, 100, f"fark_{kat_adi}")
       model.Add(fark == max_kat - min_kat)
       kategori_farklari.append(agirlik * fark)
 
     # HEDEF FONKSİYONU
+    # Ağırlıklar bilinçli olarak katmanlıdır:
+    # Saat farkındaki 1 birimlik iyileşme, altındaki tüm kriterlerden önemlidir.
+    # Sonra gün sayısı, sonra devir+bu ay toplam gün, sonra gün tipi gelir.
     model.Minimize(
-        100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
+        1_000_000_000 * saat_farki
+        + 1_000_000 * gun_farki
+        + 1_000 * kumulatif_gun_farki
+        + sum(kategori_farklari)
     )
+
+    # ------------------------------------------------------------------
+    # ÇÖZÜMSÜZLÜK TEŞHİSİ
+    # Normal optimizasyon modeline dokunmadan, aynı sert kurallarla
+    # amaçsız bir feasibility modeli kurulur. Böylece hangi ana kural
+    # grubunun çözümü kilitlediği kullanıcıya gösterilebilir.
+    # ------------------------------------------------------------------
+    def build_diagnostic_model(disabled_groups=None):
+      disabled_groups = set(disabled_groups or [])
+      dm = cp_model.CpModel()
+      dx = {(p, d): dm.NewBoolVar(f"dx_{p}_{d}")
+            for p in personeller for d in range(gun_sayisi)}
+
+      for d in range(gun_sayisi):
+        dm.Add(sum(dx[(p, d)] for p in personeller) == gunluk_nobetci)
+
+      if "izin" not in disabled_groups:
+        for p in personeller:
+          for d in izinler[p]:
+            dm.Add(dx[(p, d)] == 0)
+
+      if "sabit" not in disabled_groups:
+        for p in personeller:
+          for d in sabit_nobetler[p]:
+            dm.Add(dx[(p, d)] == 1)
+
+      if "dinlenme" not in disabled_groups:
+        for p in personeller:
+          p_dinlenme = 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
+          for d in range(gun_sayisi - p_dinlenme):
+            dm.Add(sum(dx[(p, d + k)] for k in range(p_dinlenme + 1)) <= 1)
+
+      if persembe_pazar_yasagi and "persembe_pazar" not in disabled_groups:
+        for d in range(gun_sayisi - 3):
+          if datetime.date(yil, ay, d + 1).weekday() == 3:
+            for p in personeller:
+              if p not in esnek_personel:
+                dm.Add(dx[(p, d)] + dx[(p, d + 3)] <= 1)
+
+      if "kisi_kisit" not in disabled_groups:
+        for rule in kisi_kisitlari:
+          p1 = rule["ana"]
+          aralik = rule["aralik"]
+          for p2 in rule["yasaklilar"]:
+            for d1 in range(gun_sayisi):
+              for d2 in range(max(0, d1 - aralik), min(gun_sayisi, d1 + aralik + 1)):
+                dm.Add(dx[(p1, d1)] + dx[(p2, d2)] <= 1)
+
+      if cuma_haftasonu_siki_kural and "haftasonu" not in disabled_groups:
+        for p in personeller:
+          dm.Add(sum(dx[(p, d)] for d in cuma_indeksleri) <= 1)
+          dm.Add(sum(dx[(p, d)] for d in cumartesi_indeksleri) <= 1)
+          dm.Add(sum(dx[(p, d)] for d in pazar_indeksleri) <= 1)
+
+      return dm
+
+    def diagnostic_solve(disabled_groups=None):
+      dm = build_diagnostic_model(disabled_groups)
+      ds = cp_model.CpSolver()
+      ds.parameters.max_time_in_seconds = 3
+      ds.parameters.num_search_workers = 8
+      stt = ds.Solve(dm)
+      return stt in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+    def detailed_infeasibility_report():
+      """
+      Çözüm yoksa kullanıcıya doğrudan uygulanabilir teşhis verir.
+
+      ÖNEMLİ:
+      - Ana optimizasyon modeline hiçbir müdahale etmez.
+      - Her gün için her personelin o gün nöbet tutmasının mümkün olup
+        olmadığını mevcut SERT kuralların tamamıyla test eder.
+      - Böylece sadece "grup gevşetildi" demek yerine kişi + tarih + kural
+        seviyesinde neden üretir.
+      """
+      report = ["🔎 **Detaylı çözümsüzlük analizi**"]
+      rest_days = max(1, int(dinlenme_gun_sayisi))
+
+      # ---------------------------------------------------------------
+      # Teşhis modelinin tek amacı: mevcut sert kurallarla FEASIBILITY.
+      # ---------------------------------------------------------------
+
+      # Adayın neden elendiğini kural bazında test eden yardımcı.
+      def candidate_rule_tests(p, d):
+        failures = []
+
+        # 1) İzin
+        if d in izinler[p]:
+          failures.append("izinli")
+
+        # 2) Sabit nöbet çakışması / sabit nöbetin kendisi
+        forced_days = sorted(set(sabit_nobetler[p]))
+        if d in forced_days:
+          # Bu bir engel değil; tam tersine adayın sabit nöbeti.
+          forced_conflict = False
+        else:
+          forced_conflict = any(
+              abs(fd - d) <= (1 if p in esnek_personel else rest_days)
+              for fd in forced_days
+          )
+          if forced_conflict:
+            close = [
+                datetime.date(yil, ay, fd + 1).strftime("%d.%m.%Y")
+                for fd in forced_days
+                if abs(fd - d) <= (1 if p in esnek_personel else rest_days)
+            ]
+            failures.append(
+                f"{rest_days if p not in esnek_personel else 1} gün minimum dinlenme "
+                f"(yakın sabit nöbet: {', '.join(close)})"
+            )
+
+        # 3) Perşembe -> aynı haftanın Pazar yasağı
+        if (
+            persembe_pazar_yasagi
+            and p not in esnek_personel
+            and datetime.date(yil, ay, d + 1).weekday() == 6
+        ):
+          thu = d - 3
+          if thu >= 0 and thu in forced_days:
+            failures.append(
+                f"Perşembe → Pazar yasağı (yakın sabit Perşembe: "
+                f"{datetime.date(yil, ay, thu + 1).strftime('%d.%m.%Y')})"
+            )
+
+        # 4) Cuma/Cumartesi/Pazar kişi başı maksimum 1.
+        # Burada mevcut sabit nöbetler bu gün türünde zaten 1 ise,
+        # adayın aynı kategoriye eklenmesi imkânsızdır.
+        if cuma_haftasonu_siki_kural:
+          w = datetime.date(yil, ay, d + 1).weekday()
+          if w in [4, 5, 6]:
+            same_type_forced = [
+                fd for fd in forced_days
+                if datetime.date(yil, ay, fd + 1).weekday() == w and fd != d
+            ]
+            if same_type_forced:
+              failures.append(
+                  f"{tr_gunler[w]} kişi başı maksimum 1 kuralı "
+                  f"(sabit {datetime.date(yil, ay, same_type_forced[0] + 1).strftime('%d.%m.%Y')})"
+              )
+
+        return failures
+
+      # ---------------------------------------------------------------
+      # Her aday için, mevcut tüm kuralları içeren gerçek bir feasibility
+      # testi yap. Bu, "kombinasyon nedeniyle" oluşan engelleri de yakalar.
+      # ---------------------------------------------------------------
+      def candidate_full_feasible(target_p, target_d):
+        dm = cp_model.CpModel()
+        dx = {
+            (p, dd): dm.NewBoolVar(f"diag_{p}_{dd}")
+            for p in personeller for dd in range(gun_sayisi)
+        }
+
+        # Günlük ihtiyaç
+        for dd in range(gun_sayisi):
+          dm.Add(sum(dx[(p, dd)] for p in personeller) == gunluk_nobetci)
+
+        # İzin
+        for p in personeller:
+          for dd in izinler[p]:
+            dm.Add(dx[(p, dd)] == 0)
+
+        # Sabit
+        for p in personeller:
+          for dd in sabit_nobetler[p]:
+            dm.Add(dx[(p, dd)] == 1)
+
+        # Dinlenme
+        for p in personeller:
+          p_rest = 1 if p in esnek_personel else rest_days
+          for dd in range(gun_sayisi - p_rest):
+            dm.Add(
+                sum(dx[(p, dd + k)] for k in range(p_rest + 1)) <= 1
+            )
+
+        # Perşembe -> Pazar
+        if persembe_pazar_yasagi:
+          for dd in range(gun_sayisi - 3):
+            if datetime.date(yil, ay, dd + 1).weekday() == 3:
+              for p in personeller:
+                if p not in esnek_personel:
+                  dm.Add(dx[(p, dd)] + dx[(p, dd + 3)] <= 1)
+
+        # Kişiler arası özel kısıtlar
+        for rule in kisi_kisitlari:
+          p1 = rule["ana"]
+          aralik = rule["aralik"]
+          for p2 in rule["yasaklilar"]:
+            for d1 in range(gun_sayisi):
+              for d2 in range(
+                  max(0, d1 - aralik),
+                  min(gun_sayisi, d1 + aralik + 1),
+              ):
+                dm.Add(dx[(p1, d1)] + dx[(p2, d2)] <= 1)
+
+        # Cuma/Cumartesi/Pazar maksimum 1
+        if cuma_haftasonu_siki_kural:
+          for p in personeller:
+            dm.Add(sum(
+                dx[(p, dd)] for dd in cuma_indeksleri
+            ) <= 1)
+            dm.Add(sum(
+                dx[(p, dd)] for dd in cumartesi_indeksleri
+            ) <= 1)
+            dm.Add(sum(
+                dx[(p, dd)] for dd in pazar_indeksleri
+            ) <= 1)
+
+        # Adayı hedef güne zorla
+        dm.Add(dx[(target_p, target_d)] == 1)
+
+        ds = cp_model.CpSolver()
+        ds.parameters.max_time_in_seconds = 1.5
+        ds.parameters.num_search_workers = 4
+        ds.parameters.random_seed = 17
+        stt = ds.Solve(dm)
+        return stt in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+      # ---------------------------------------------------------------
+      # Önce "doğrudan" değil, gerçekten tüm kurallarla kilitlenmiş günleri
+      # buluyoruz. Böylece yanlış gün seçilmesi engelleniyor.
+      # ---------------------------------------------------------------
+      critical_days = []
+      day_candidate_cache = {}
+
+      for d in range(gun_sayisi):
+        feasible_people = []
+        impossible_people = []
+
+        for p in personeller:
+          ok = candidate_full_feasible(p, d)
+          if ok:
+            feasible_people.append(p)
+          else:
+            impossible_people.append(p)
+
+        day_candidate_cache[d] = (feasible_people, impossible_people)
+
+        if len(feasible_people) < gunluk_nobetci:
+          critical_days.append(d)
+
+      if critical_days:
+        # En az adaylı günleri önce göster.
+        min_candidates = min(
+            len(day_candidate_cache[d][0]) for d in critical_days
+        )
+        critical_days = [
+            d for d in critical_days
+            if len(day_candidate_cache[d][0]) == min_candidates
+        ]
+
+        report.append("\n❌ **Nöbet listesi oluşturulamadı.**")
+        report.append(
+            f"**{len(critical_days)} kritik gün** tespit edildi. "
+            f"Her kritik günde {gunluk_nobetci} nöbetçi gerekiyor."
+        )
+
+        for d in critical_days:
+          tarih = datetime.date(yil, ay, d + 1)
+          tarih_text = tarih.strftime("%d.%m.%Y")
+          feasible_people, impossible_people = day_candidate_cache[d]
+
+          report.append(
+              f"\n🔴 **{tarih_text} {tr_gunler[tarih.weekday()]} günü için "
+              f"{gunluk_nobetci} nöbetçi gerekiyor ancak yalnızca "
+              f"{len(feasible_people)} kişi tüm kurallarla uygun.**"
+          )
+
+          report.append("\n**Uygun olmayan kişiler ve nedenleri:**")
+          for p in personeller:
+            basic = candidate_rule_tests(p, d)
+            full_ok = p in feasible_people
+
+            if full_ok:
+              report.append(f"- **{p}** → ✅ Uygun")
+            elif basic:
+              report.append(f"- **{p}** → ❌ " + "; ".join(basic))
+            else:
+              report.append(
+                  f"- **{p}** → ❌ Mevcut kuralların kombinasyonu nedeniyle "
+                  f"bu gün nöbet tutamıyor."
+              )
+
+          # Somut kural tespiti: her ana kuralı tek tek gevşetip,
+          # BU KRİTİK GÜNDE aday sayısının artıp artmadığını test ediyoruz.
+          rule_groups = [
+              ("izin", "İzin kısıtları"),
+              ("sabit", "Sabit/zorunlu nöbetler"),
+              ("dinlenme", "Minimum dinlenme süresi"),
+              ("persembe_pazar", "Perşembe → aynı haftanın Pazar yasağı"),
+              ("kisi_kisit", "Kişiler arası özel kısıtlar"),
+              ("haftasonu", "Cuma/Cumartesi/Pazar kişi başı maksimum 1"),
+          ]
+
+          improved_rules = []
+          for key, label in rule_groups:
+            # Kuralı kaldırarak bu gün için aday sayısını tekrar hesapla.
+            added = []
+            for p in personeller:
+              if p in feasible_people:
+                continue
+
+              # Basit hızlı filtre: kişi doğrudan izinliyse, izin grubunu
+              # gevşetmeden aday olamaz; diğer kombinasyonlar için gerçek test.
+              if key != "izin" and d in izinler[p]:
+                continue
+              if key == "izin":
+                # İzin kısıtı kapatılınca kişi aday olabilir mi?
+                pass
+
+              # Bu testte disabled_groups ile adayın hedef güne zorlandığı
+              # tam model kullanılıyor.
+              dm = cp_model.CpModel()
+              dx = {
+                  (pp, dd): dm.NewBoolVar(f"dg_{pp}_{dd}")
+                  for pp in personeller for dd in range(gun_sayisi)
+              }
+
+              for dd in range(gun_sayisi):
+                dm.Add(sum(dx[(pp, dd)] for pp in personeller) == gunluk_nobetci)
+
+              disabled = {key}
+
+              if "izin" not in disabled:
+                for pp in personeller:
+                  for dd in izinler[pp]:
+                    dm.Add(dx[(pp, dd)] == 0)
+
+              if "sabit" not in disabled:
+                for pp in personeller:
+                  for dd in sabit_nobetler[pp]:
+                    dm.Add(dx[(pp, dd)] == 1)
+
+              if "dinlenme" not in disabled:
+                for pp in personeller:
+                  pp_rest = 1 if pp in esnek_personel else rest_days
+                  for dd in range(gun_sayisi - pp_rest):
+                    dm.Add(sum(dx[(pp, dd+k)] for k in range(pp_rest+1)) <= 1)
+
+              if persembe_pazar_yasagi and "persembe_pazar" not in disabled:
+                for dd in range(gun_sayisi - 3):
+                  if datetime.date(yil, ay, dd+1).weekday() == 3:
+                    for pp in personeller:
+                      if pp not in esnek_personel:
+                        dm.Add(dx[(pp, dd)] + dx[(pp, dd+3)] <= 1)
+
+              if "kisi_kisit" not in disabled:
+                for rule in kisi_kisitlari:
+                  p1 = rule["ana"]
+                  aralik = rule["aralik"]
+                  for p2 in rule["yasaklilar"]:
+                    for d1 in range(gun_sayisi):
+                      for d2 in range(
+                          max(0, d1-aralik),
+                          min(gun_sayisi, d1+aralik+1)
+                      ):
+                        dm.Add(dx[(p1,d1)] + dx[(p2,d2)] <= 1)
+
+              if cuma_haftasonu_siki_kural and "haftasonu" not in disabled:
+                for pp in personeller:
+                  dm.Add(sum(dx[(pp,dd)] for dd in cuma_indeksleri) <= 1)
+                  dm.Add(sum(dx[(pp,dd)] for dd in cumartesi_indeksleri) <= 1)
+                  dm.Add(sum(dx[(pp,dd)] for dd in pazar_indeksleri) <= 1)
+
+              dm.Add(dx[(p, d)] == 1)
+
+              ds = cp_model.CpSolver()
+              ds.parameters.max_time_in_seconds = 0.7
+              ds.parameters.num_search_workers = 4
+              stt = ds.Solve(dm)
+              if stt in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                added.append(p)
+
+            if added:
+              improved_rules.append((label, added))
+
+          # En önemli sebep: en fazla yeni aday kazandıran kural.
+          if improved_rules:
+            improved_rules.sort(key=lambda z: len(z[1]), reverse=True)
+            best_label, best_people = improved_rules[0]
+            report.append("\n**🔴 Çakışmayı oluşturan temel kural:**")
+            report.append(
+                f"**{best_label}** kaldırıldığında bu gün için "
+                f"{len(best_people)} ek personel uygun hale geliyor: "
+                + ", ".join(best_people)
+            )
+
+          # Somut çözüm önerileri
+          suggestions = []
+
+          # Yakın sabit nöbetleri bul
+          forced_changes = []
+          leave_people = []
+          for p in personeller:
+            basic = candidate_rule_tests(p, d)
+            if "izinli" in basic:
+              leave_people.append(p)
+
+            for fd in sorted(set(sabit_nobetler[p])):
+              if fd != d and abs(fd-d) <= (1 if p in esnek_personel else rest_days):
+                forced_changes.append((p, fd))
+
+          seen = set()
+          for p, fd in forced_changes:
+            key = (p, fd)
+            if key not in seen:
+              seen.add(key)
+              suggestions.append(
+                  f"**{datetime.date(yil, ay, fd+1).strftime('%d.%m')} "
+                  f"{p} sabit nöbetini** başka bir güne/kişiye almak"
+              )
+
+          for p in leave_people:
+            suggestions.append(
+                f"**{p}'nin {tarih_text} iznini** kaldırmak/değiştirmek"
+            )
+
+          # Dinlenme kuralı gerçekten kritikse öner.
+          if any(label == "Minimum dinlenme süresi" for label, _ in improved_rules):
+            suggestions.append(
+                f"Minimum dinlenmeyi geçici olarak **{max(1, rest_days-1)} güne** indirmek"
+            )
+
+          if suggestions:
+            report.append("\n**🛠️ Çözüm için olası değişiklikler:**")
+            for item in suggestions:
+              report.append(f"- {item}")
+
+      else:
+        report.append(
+            "\n🟡 Her gün tek tek kişi bazında tüm sert kurallarla test edildiğinde "
+            "yeterli aday bulundu. Bu durumda sorun tek bir günün boş kalması değil, "
+            "kuralların ay genelinde birlikte oluşturduğu kombinasyondur."
+        )
+
+      # Eski "tek grup gevşetme" raporu artık ana teşhis değildir.
+      # İstenirse yalnızca ek bilgi olarak gösterilir.
+      groups = [
+          ("izin", "İzin kısıtları"),
+          ("sabit", "Sabit/zorunlu nöbetler"),
+          ("dinlenme", "Minimum dinlenme süresi"),
+          ("persembe_pazar", "Perşembe → aynı haftanın Pazar yasağı"),
+          ("kisi_kisit", "Kişiler arası özel kısıtlar"),
+          ("haftasonu", "Cuma/Cumartesi/Pazar kişi başı maksimum 1"),
+      ]
+      relaxable = []
+      for key, label in groups:
+        if diagnostic_solve({key}):
+          relaxable.append(label)
+
+      if relaxable:
+        report.append(
+            "\n📎 **Ek teknik bilgi – tek grup gevşetildiğinde çözüm bulunan gruplar:**"
+        )
+        report.append(", ".join(relaxable))
+        report.append(
+            "Bu bölüm yalnızca ek teşhistir; yukarıdaki gün/kişi/kural "
+            "analizi asıl kullanıcı geri bildirimidir."
+        )
+
+      if kisi_kisitlari:
+        report.append("\n🤝 **Kişiler arası özel kısıtlar:**")
+        for i, rule in enumerate(kisi_kisitlari, 1):
+          report.append(
+              f"- #{i}: {rule['ana']} ↔ {', '.join(rule['yasaklilar'])}; "
+              f"minimum mesafe {rule['aralik']} gün"
+          )
+
+      return report
 
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
@@ -889,6 +1451,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
       columns_tuples.append(("T.NöbetSaati", ""))
       columns_tuples.append(("TOPLAM NÖBET", ""))
+      columns_tuples.append(("DEVİR+BU AY", ""))
 
       multi_cols = pd.MultiIndex.from_tuples(columns_tuples)
       istatistik_rows = []
@@ -918,6 +1481,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
         row_dict[("T.NöbetSaati", "")] = bu_ay_saat
         row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
+        row_dict[("DEVİR+BU AY", "")] = sum(get_prev(p, g) for g in gunler_listesi) + bu_ay_toplam_nobet
 
         istatistik_rows.append(row_dict)
 
@@ -983,3 +1547,14 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
           "❌ Çözüm bulunamadı! Girilen kısıtlar, izinler veya sabit nöbetler"
           " birbiriyle çakışıyor olabilir."
       )
+
+      with st.expander("🔍 Neden çözüm bulunamadı? Detaylı teşhis", expanded=True):
+        for line in detailed_infeasibility_report():
+          if line.startswith("🔴"):
+            st.error(line)
+          elif line.startswith("🟠"):
+            st.warning(line)
+          elif line.startswith("🟡"):
+            st.info(line)
+          else:
+            st.markdown(line)
