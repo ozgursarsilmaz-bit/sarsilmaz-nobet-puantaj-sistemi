@@ -20,9 +20,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    .main {
-        background-color: #F8F9FA;
-    }
+    .main { background-color: #F8F9FA; }
     .header-box {
         background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
         color: white;
@@ -89,7 +87,6 @@ gun_saat_haritasi = {
     "Pazar": 16,
 }
 
-# Birim Sözlüğü (Puantaj Tablosundaki Birim Sütununu Doldurmak İçin)
 personel_birimleri = {
     "ÖZGÜR SARSILMAZ": "Mikro",
     "AYŞEGÜL SARUHAN": "Kültür",
@@ -155,15 +152,13 @@ st.markdown(
     """
 <div class="header-box">
     <h1 style="margin:0; font-size: 2rem; font-weight: 800;">🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
-    <p style="margin:5px 0 0 0; opacity: 0.9; font-size: 1rem;">Hafta Sonu Dengeli Dağılım | Kişiler Arası Nöbet Kısıtları & Adil Saat Optimizasyonu</p>
+    <p style="margin:5px 0 0 0; opacity: 0.9; font-size: 1rem;">Kişiye Özel Kural Esneklikleri & Adil Saat Optimizasyonu</p>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# --- AYARLAR (SOL MENÜ) ---
-st.sidebar.title("⚙️ Yönetim Paneli")
-
+# --- YÖNETİM PANELİ İÇERİĞİ ---
 st.sidebar.subheader("📅 Tarih ve Kadro")
 col_yil, col_ay = st.sidebar.columns(2)
 
@@ -196,23 +191,25 @@ gunluk_nobetci = st.sidebar.number_input(
 )
 
 dinlenme_gun_sayisi = st.sidebar.number_input(
-    "Kişisel Nöbet Arası Min. Dinlenme (Gün):",
+    "Genel Nöbet Arası Min. Dinlenme (Gün):",
     min_value=0,
     max_value=10,
     value=4,
 )
 
 persembe_pazar_yasagi = st.sidebar.checkbox(
-    "Perşembe - Pazar Yasağı",
+    "Genel Perşembe - Pazar Yasağı",
     value=True,
 )
 
-hafta_sonu_tek_nobet_siniri = st.sidebar.checkbox(
-    "Hafta Sonu Ayda Maks. 1 Nöbet (Cumartesi / Pazar)",
-    value=True,
+# KİŞİYE ÖZEL KURAL ESNEKLİĞİ SEÇİM ALANI
+esnek_personel = st.sidebar.multiselect(
+    "🔓 Özel Esneklik Tanınacak Personel(ler):",
+    options=personeller,
+    default=[],
     help=(
-        "Aktif edildiğinde bir personele ay içinde 1'den fazla Cumartesi veya"
-        " 1'den fazla Pazar nöbeti yazılmamasına çalışılır."
+        "Burada seçilen kişilere Perşembe-Pazar yasağı UYGULANMAZ ve min."
+        " dinlenme süresi 1 güne düşürülür."
     ),
 )
 
@@ -397,7 +394,7 @@ m6.metric("🤝 Özel Kısıtlar", f"{len(kisi_kisitlari)} Kural")
 st.markdown("<br>", unsafe_allow_html=True)
 
 
-# --- 3 SEKMELİ ÖZEL EXCEL OLUŞTURUCU FONKSİYON ---
+# --- 3 SEKMELİ ÖZEL EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
     yil, ay, personeller, nobet_dict, gecmis_istatistik, gun_sayisi
 ):
@@ -407,10 +404,8 @@ def generate_3_tab_excel(
   font_header = Font(name="Calibri", size=10, bold=True, color="000000")
   font_body = Font(name="Calibri", size=9, bold=False, color="000000")
   font_bold = Font(name="Calibri", size=9, bold=True, color="000000")
-  font_ni = Font(name="Calibri", size=9, bold=True, color="C00000")  # Kırmızı Nİ
-  font_24 = Font(
-      name="Calibri", size=9, bold=True, color="002060"
-  )  # Lacivert 24
+  font_ni = Font(name="Calibri", size=9, bold=True, color="C00000")
+  font_24 = Font(name="Calibri", size=9, bold=True, color="002060")
 
   fill_header = PatternFill(
       start_color="C5D9A4", end_color="C5D9A4", fill_type="solid"
@@ -430,7 +425,7 @@ def generate_3_tab_excel(
   align_center = Alignment(horizontal="center", vertical="center")
   align_left = Alignment(horizontal="left", vertical="center")
 
-  # --- SEKME 1: AYLIK GÖREV LİSTESİ ---
+  # 1. SEKME: GÖREV LİSTESİ
   ws1 = wb.active
   ws1.title = "Aylık Görev Listesi"
   ws1.views.sheetView[0].showGridLines = True
@@ -467,7 +462,7 @@ def generate_3_tab_excel(
   ws1.column_dimensions["B"].width = 15
   ws1.column_dimensions["C"].width = 45
 
-  # --- SEKME 2: NÖBET İSTATİSTİĞİ & MESAİ YÜKÜ ---
+  # 2. SEKME: İSTATİSTİK
   ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
   ws2.views.sheetView[0].showGridLines = True
 
@@ -573,7 +568,7 @@ def generate_3_tab_excel(
 
   ws2.column_dimensions["A"].width = 25
 
-  # --- SEKME 3: PUANTAJ TABLOSU (8 / 24 / Nİ / GRİ MATRİS) ---
+  # 3. SEKME: PUANTAJ TABLOSU
   ws3 = wb.create_sheet("Puantaj Tablosu")
   ws3.views.sheetView[0].showGridLines = True
 
@@ -699,24 +694,27 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       for d in sabit_nobetler[p]:
         model.Add(x[(p, d)] == 1)
 
-    if dinlenme_gun_sayisi > 0:
-      for p in personeller:
-        for d in range(gun_sayisi - dinlenme_gun_sayisi):
-          model.Add(
-              sum(
-                  x.get((p, d + k), 0)
-                  for k in range(dinlenme_gun_sayisi + 1)
-              )
-              <= 1
-          )
+    # DİNAMİK MİNİMUM DİNLENME SÜRESİ UYGULAMASI
+    for p in personeller:
+      # Seçilen özel personele 1 gün dinlenme, diğerlerine genel kural (örn. 4 gün) uygulanır
+      p_dinlenme = (
+          1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
+      )
+      for d in range(gun_sayisi - p_dinlenme):
+        model.Add(
+            sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1)) <= 1
+        )
 
+    # DİNAMİK PERŞEMBE - PAZAR YASAĞI UYGULAMASI
     if persembe_pazar_yasagi:
       for d in range(gun_sayisi - 3):
-        if datetime.date(yil, ay, d + 1).weekday() == 3:
+        if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
           for p in personeller:
-            model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
+            # Sadece esnek personelde bu yasak kaldırılır
+            if p not in esnek_personel:
+              model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
-    # --- KİŞİLER ARASI ÖZEL MESAFE / ÇAKIŞMA KURALLARI ---
+    # KİŞİLER ARASI ÖZEL MESAFE KURALLARI
     for rule in kisi_kisitlari:
       p1 = rule["ana"]
       aralik = rule["aralik"]
@@ -727,32 +725,12 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
           ):
             model.Add(x[(p1, d1)] + x[(p2, d2)] <= 1)
 
-    # --- HAFTA SONU MAKSİMUM 1 NÖBET KISITI (CUMARTESİ / PAZAR) ---
     def gun_kategorisi_indeksleri(w_list):
       return [
           d
           for d in range(gun_sayisi)
           if datetime.date(yil, ay, d + 1).weekday() in w_list
       ]
-
-    cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
-    pazar_indeksleri = gun_kategorisi_indeksleri([6])
-
-    hafta_sonu_cezasi = []
-    if hafta_sonu_tek_nobet_siniri:
-      for p in personeller:
-        cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
-        pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
-
-        cumartesi_fazla = model.NewIntVar(0, 10, f"cmts_fazla_{p}")
-        pazar_fazla = model.NewIntVar(0, 10, f"pzr_fazla_{p}")
-
-        model.Add(cumartesi_fazla >= cumartesi_sayisi - 1)
-        model.Add(pazar_fazla >= pazar_sayisi - 1)
-
-        hafta_sonu_cezasi.append(
-            50000 * cumartesi_fazla + 50000 * pazar_fazla
-        )
 
     gun_saatleri = []
     for d in range(gun_sayisi):
@@ -765,7 +743,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         h = 24
       gun_saatleri.append(h)
 
-    # --- OPTİMİZASYON: Bu ayki saatleri eşitle ---
     max_bu_ay_saat = model.NewIntVar(0, 1000, "max_bu_ay_saat")
     min_bu_ay_saat = model.NewIntVar(0, 1000, "min_bu_ay_saat")
 
@@ -809,10 +786,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
     # HEDEF FONKSİYONU
     model.Minimize(
-        100000 * saat_farki
-        + sum(hafta_sonu_cezasi)
-        + sum(kategori_farklari)
-        + 10 * max_bu_ay_saat
+        100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
     )
 
     solver = cp_model.CpSolver()
@@ -820,14 +794,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
       st.balloons()
-      st.success(
-          "✨ Nöbet çizelgesi, mesai yükü analizi ve puantaj tablosu başarıyla"
-          " oluşturuldu!"
-      )
+      st.success("✨ Nöbet çizelgesi ve Puantaj tablosu başarıyla oluşturuldu!")
 
       nobet_dict = {p: set() for p in personeller}
 
-      # 1. AYLIK ÇİZELGE VERİSİ
       liste_data = []
       for d in range(gun_sayisi):
         tarih = datetime.date(yil, ay, d + 1)
@@ -835,7 +805,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         for p in personeller:
           if solver.Value(x[(p, d)]) == 1:
             nobetciler.append(p)
-            nobet_dict[p].add(d + 1)  # 1-indexed gün numarası
+            nobet_dict[p].add(d + 1)
 
         liste_data.append({
             "Tarih": tarih.strftime("%d.%m.%Y"),
@@ -844,7 +814,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         })
       df_liste = pd.DataFrame(liste_data)
 
-      # 2. İSTATİSTİK TABLOSU VERİSİ
       gunler_listesi = [
           "Pazartesi",
           "Salı",
@@ -895,7 +864,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
       df_istatistik = pd.DataFrame(istatistik_rows, columns=multi_cols)
 
-      # 3. PUANTAJ MATRİSİ ÖNİZLEME VERİSİ
       puantaj_rows = []
       for p in personeller:
         p_row = {"Adı Soyadı": p, "Birim": personel_birimleri.get(p, "Mikro")}
@@ -913,7 +881,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
       df_puantaj = pd.DataFrame(puantaj_rows)
 
-      # --- SEKMELİ SONUÇ EKRANI ---
       tab1, tab2, tab3, tab4 = st.tabs([
           "📅 Aylık Çizelge",
           "📊 İstatistik & Mesai",
