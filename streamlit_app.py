@@ -16,39 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ŞİFRE VE GÜVENLİK AYARLARI ---
-SIFRE = "Sars.2026"
-
-st.sidebar.title("⚙️ Yönetim Paneli")
-
-sifre_aktif = st.sidebar.checkbox(
-    "🔒 Şifre Korumasını Aktif Et",
-    value=False,
-    key="sifre_toggle",
-    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
-)
-
-if "authenticated" not in st.session_state:
-  st.session_state["authenticated"] = not sifre_aktif
-
-if sifre_aktif:
-  if not st.session_state.get("authenticated", False):
-    st.sidebar.subheader("🔒 Giriş Yap")
-    girilen_sifre = st.sidebar.text_input(
-        "Uygulama Şifresi", type="password", key="password_input"
-    )
-
-    if st.sidebar.button("Giriş Yap"):
-      if girilen_sifre == SIFRE:
-        st.session_state["authenticated"] = True
-        st.rerun()
-      else:
-        st.sidebar.error("❌ Hatalı şifre!")
-
-    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
-    st.stop()
-else:
-  st.session_state["authenticated"] = True
 
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
@@ -207,8 +174,7 @@ _, gun_sayisi = calendar.monthrange(yil, ay)
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
     value=(
-        "BELGİN UYSAL\nKEVSER DUMLU\nMURAT GENCER\nSEÇİL YILDIRAK\nSUNA"
-        " SARSILMAZ\nŞADUMAN YALÇIN\nŞENEL TAŞ"
+        "ÖZGÜR SARSILMAZ"
     ),
     height=200,
 )
