@@ -16,40 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ŞİFRE VE GÜVENLİK AYARLARI (OPSİYONEL) ---
-SIFRE = "Sars.2026"
-
-st.sidebar.title("⚙️ Yönetim Paneli")
-
-# Şifre Koruması Açma/Kapama Kutusu (Varsayılan: False / Kapalı)
-sifre_aktif = st.sidebar.checkbox(
-    "🔒 Şifre Korumasını Aktif Et",
-    value=False,
-    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
-)
-
-if sifre_aktif:
-  if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-  if not st.session_state["authenticated"]:
-    girilen_sifre = st.sidebar.text_input(
-        "Uygulama Şifresi", type="password", key="password_input"
-    )
-
-    if st.sidebar.button("Giriş Yap"):
-      if girilen_sifre == SIFRE:
-        st.session_state["authenticated"] = True
-        st.rerun()
-      else:
-        st.sidebar.error("❌ Hatalı şifre!")
-
-    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
-    st.stop()
-else:
-  # Şifre koruması kapalıysa doğrudan oturum açılmış sayılır
-  st.session_state["authenticated"] = True
-
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
     """
