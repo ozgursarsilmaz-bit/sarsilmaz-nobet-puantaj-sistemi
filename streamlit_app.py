@@ -16,6 +16,40 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- ŞİFRE VE GÜVENLİK AYARLARI (DİNAMİK/OPSİYONEL) ---
+SIFRE = "Sars.2026"
+
+st.sidebar.title("⚙️ Yönetim Paneli")
+
+sifre_aktif = st.sidebar.checkbox(
+    "🔒 Şifre Korumasını Aktif Et",
+    value=False,
+    key="sifre_toggle",
+    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
+)
+
+if "authenticated" not in st.session_state:
+  st.session_state["authenticated"] = not sifre_aktif
+
+if sifre_aktif:
+  if not st.session_state.get("authenticated", False):
+    st.sidebar.subheader("🔒 Giriş Yap")
+    girilen_sifre = st.sidebar.text_input(
+        "Uygulama Şifresi", type="password", key="password_input"
+    )
+
+    if st.sidebar.button("Giriş Yap"):
+      if girilen_sifre == SIFRE:
+        st.session_state["authenticated"] = True
+        st.rerun()
+      else:
+        st.sidebar.error("❌ Hatalı şifre!")
+
+    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
+    st.stop()
+else:
+  st.session_state["authenticated"] = True
+
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
     """
@@ -152,7 +186,7 @@ st.markdown(
     """
 <div class="header-box">
     <h1 style="margin:0; font-size: 2rem; font-weight: 800;">🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
-    <p style="margin:5px 0 0 0; opacity: 0.9; font-size: 1rem;">Kişiye Özel Kural Esneklikleri & Adil Saat Optimizasyonu</p>
+    <p style="margin:5px 0 0 0; opacity: 0.9; font-size: 1rem;">Kişiye Özel Kural Esneklikleri & Cuma/Cumartesi/Pazar Öncelikli Dengeli Dağılım</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -202,7 +236,6 @@ persembe_pazar_yasagi = st.sidebar.checkbox(
     value=True,
 )
 
-# KİŞİYE ÖZEL KURAL ESNEKLİĞİ SEÇİM ALANI
 esnek_personel = st.sidebar.multiselect(
     "🔓 Özel Esneklik Tanınacak Personel(ler):",
     options=personeller,
@@ -214,7 +247,7 @@ esnek_personel = st.sidebar.multiselect(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Geçmiş Ay Rotasyonu (Eylül Dosyası)")
+st.sidebar.subheader("📊 Geçmiş Ay Rotasyonu (Eylul Dosyası)")
 uploaded_file = st.sidebar.file_uploader(
     "Önceki Ayın Excel Dosyası:",
     type=["xlsx", "xls"],
@@ -694,9 +727,8 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       for d in sabit_nobetler[p]:
         model.Add(x[(p, d)] == 1)
 
-    # DİNAMİK MİNİMUM DİNLENME SÜRESİ UYGULAMASI
+    # DİNAMİK MİNİMUM DİNLENME SÜRESİ
     for p in personeller:
-      # Seçilen özel personele 1 gün dinlenme, diğerlerine genel kural (örn. 4 gün) uygulanır
       p_dinlenme = (
           1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
       )
@@ -705,12 +737,11 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1)) <= 1
         )
 
-    # DİNAMİK PERŞEMBE - PAZAR YASAĞI UYGULAMASI
+    # DİNAMİK PERŞEMBE - PAZAR YASAĞI
     if persembe_pazar_yasagi:
       for d in range(gun_sayisi - 3):
         if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
           for p in personeller:
-            # Sadece esnek personelde bu yasak kaldırılır
             if p not in esnek_personel:
               model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
@@ -731,6 +762,54 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
           for d in range(gun_sayisi)
           if datetime.date(yil, ay, d + 1).weekday() in w_list
       ]
+
+    cuma_indeksleri = gun_kategorisi_indeksleri([4])
+    cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
+    pazar_indeksleri = gun_kategorisi_indeksleri([6])
+
+    # CUMA / CUMARTESİ / PAZAR KADEMELİ CEZA VE ÜÇLÜ KOMBİNASYON ENGELİ
+    kritik_gun_cezaları = []
+
+    for p in personeller:
+      cuma_sayisi = sum(x[(p, d)] for d in cuma_indeksleri)
+      cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
+      pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
+
+      # 1. Aşım değişkenleri (2. nöbetler)
+      cuma_fazla = model.NewIntVar(0, 10, f"cuma_fazla_{p}")
+      cumartesi_fazla = model.NewIntVar(0, 10, f"cmts_fazla_{p}")
+      pazar_fazla = model.NewIntVar(0, 10, f"pzr_fazla_{p}")
+
+      model.Add(cuma_fazla >= cuma_sayisi - 1)
+      model.Add(cumartesi_fazla >= cumartesi_sayisi - 1)
+      model.Add(pazar_fazla >= pazar_sayisi - 1)
+
+      # 2. Her gün için "En az 1 nöbet var mı?" kontrolü
+      has_cuma = model.NewBoolVar(f"has_cuma_{p}")
+      has_cmts = model.NewBoolVar(f"has_cmts_{p}")
+      has_pzr = model.NewBoolVar(f"has_pzr_{p}")
+
+      model.Add(cuma_sayisi >= 1).OnlyEnforceIf(has_cuma)
+      model.Add(cuma_sayisi == 0).OnlyEnforceIf(has_cuma.Not())
+
+      model.Add(cumartesi_sayisi >= 1).OnlyEnforceIf(has_cmts)
+      model.Add(cumartesi_sayisi == 0).OnlyEnforceIf(has_cmts.Not())
+
+      model.Add(pazar_sayisi >= 1).OnlyEnforceIf(has_pzr)
+      model.Add(pazar_sayisi == 0).OnlyEnforceIf(has_pzr.Not())
+
+      # 3. Hem 1 Cuma + Hem 1 Cumartesi + Hem 1 Pazar Aynı Kişide Toplanmasın (Üçlü Kombinasyon)
+      uclu_haftasonu = model.NewBoolVar(f"uclu_hs_{p}")
+      model.Add(uclu_haftasonu >= has_cuma + has_cmts + has_pzr - 2)
+
+      # Kademeli Ceza Puanları
+      # Cumartesi (En Yüksek: 100.000) -> Pazar (60.000) -> Üçlü Kombinasyon (45.000) -> Cuma (30.000)
+      kritik_gun_cezaları.append(
+          100000 * cumartesi_fazla
+          + 60000 * pazar_fazla
+          + 45000 * uclu_haftasonu
+          + 30000 * cuma_fazla
+      )
 
     gun_saatleri = []
     for d in range(gun_sayisi):
@@ -786,7 +865,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
     # HEDEF FONKSİYONU
     model.Minimize(
-        100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
+        100000 * saat_farki
+        + sum(kritik_gun_cezaları)
+        + sum(kategori_farklari)
+        + 10 * max_bu_ay_saat
     )
 
     solver = cp_model.CpSolver()
