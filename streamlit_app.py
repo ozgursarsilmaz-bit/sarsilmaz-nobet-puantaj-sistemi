@@ -16,39 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ŞİFRE VE GÜVENLİK AYARLARI ---
-SIFRE = "Sars.2026"
-
-st.sidebar.title("⚙️ Yönetim Paneli")
-
-sifre_aktif = st.sidebar.checkbox(
-    "🔒 Şifre Korumasını Aktif Et",
-    value=False,
-    key="sifre_toggle",
-    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
-)
-
-if "authenticated" not in st.session_state:
-  st.session_state["authenticated"] = not sifre_aktif
-
-if sifre_aktif:
-  if not st.session_state.get("authenticated", False):
-    st.sidebar.subheader("🔒 Giriş Yap")
-    girilen_sifre = st.sidebar.text_input(
-        "Uygulama Şifresi", type="password", key="password_input"
-    )
-
-    if st.sidebar.button("Giriş Yap"):
-      if girilen_sifre == SIFRE:
-        st.session_state["authenticated"] = True
-        st.rerun()
-      else:
-        st.sidebar.error("❌ Hatalı şifre!")
-
-    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
-    st.stop()
-else:
-  st.session_state["authenticated"] = True
 
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
@@ -98,40 +65,70 @@ st.markdown(
     }
 
     /* Personel izin / sabit nöbet giriş tablosu */
+    /* Kompakt personel giriş tablosu: 13-15 kişi tek ekranda görülebilsin. */
     .personel-giris-baslik {
         font-weight: 700;
-        font-size: 0.90rem;
+        font-size: 0.78rem;
         color: #212529;
-        padding: 5px 8px 8px 8px;
+        padding: 2px 6px 4px 6px;
+        white-space: nowrap;
     }
     .personel-giris-adi {
-        min-height: 42px;
+        min-height: 30px;
+        height: 30px;
         display: flex;
         align-items: center;
         font-weight: 600;
-        font-size: 0.90rem;
-        padding: 4px 8px;
+        font-size: 0.78rem;
+        padding: 1px 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .personel-giris-ayirici {
-        margin: 3px 0 7px 0;
+        margin: 0;
+        padding: 0;
+        height: 1px;
         border: 0;
         border-top: 1px solid #E9ECEF;
     }
-    /* Çok sayıda gün seçilince satır sonsuza kadar büyümesin. */
+    /* Çok sayıda gün seçilince satır büyümesin; seçili günler alan içinde kayar. */
+    div[data-testid="stMultiSelect"] {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stMultiSelect"] > div {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
     div[data-testid="stMultiSelect"] div[data-baseweb="select"] {
-        min-height: 42px;
+        min-height: 30px !important;
+        height: 30px !important;
     }
     div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
-        max-height: 72px;
-        overflow-y: auto;
-        overflow-x: hidden;
+        max-height: 30px !important;
+        min-height: 30px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding: 1px 4px !important;
+        align-content: center;
     }
     div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        font-size: 0.80rem;
-        margin: 2px 3px 2px 0;
+        font-size: 0.70rem !important;
+        line-height: 18px !important;
+        height: 20px !important;
+        margin: 1px 2px 1px 0 !important;
+        padding: 0 4px !important;
     }
     div[data-testid="stMultiSelect"] [data-baseweb="tag"] span {
-        font-size: 0.80rem;
+        font-size: 0.70rem !important;
+    }
+    div[data-testid="stMultiSelect"] input {
+        font-size: 0.72rem !important;
+    }
+    /* Streamlit'in widget alt boşluğunu da küçült. */
+    div[data-testid="stMultiSelect"] + div {
+        display: none !important;
     }
 </style>
 """,
@@ -244,8 +241,7 @@ _, gun_sayisi = calendar.monthrange(yil, ay)
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
     value=(
-        "BELGİN UYSAL\nKEVSER DUMLU\nMURAT GENCER\nSEÇİL YILDIRAK\nSUNA"
-        " SARSILMAZ\nŞADUMAN YALÇIN\nŞENEL TAŞ"
+        "ÖZGÜR SARSILMAZ"
     ),
     height=200,
 )
@@ -371,7 +367,7 @@ toplam_izin_sayisi = 0
 toplam_sabit_sayisi = 0
 
 # Başlık satırı
-baslik_personel, baslik_izin, baslik_sabit = st.columns([1.15, 2.4, 2.4])
+baslik_personel, baslik_izin, baslik_sabit = st.columns([1.25, 2.0, 2.0])
 
 with baslik_personel:
   st.markdown(
@@ -396,7 +392,7 @@ with baslik_sabit:
 gun_secenekleri = list(range(1, gun_sayisi + 1))
 
 for idx, p in enumerate(personeller):
-  col_personel, col_izin, col_sabit = st.columns([1.15, 2.4, 2.4])
+  col_personel, col_izin, col_sabit = st.columns([1.25, 2.0, 2.0])
 
   with col_personel:
     st.markdown(
