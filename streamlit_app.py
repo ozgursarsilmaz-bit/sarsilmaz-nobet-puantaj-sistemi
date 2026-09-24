@@ -251,7 +251,7 @@ st.markdown(
     """
 <div class="header-box">
     <h1>🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
-    <p>Cuma/Cumartesi/Pazar Dengeli Dağılım & Adil Saat Optimizasyonu</p>
+    <p>Tüm Günler Dengeli Dağılım & Adil Saat Optimizasyonu & Çalışma Listesi_Ay Sonu İstatistik_Putantaj Oluşturma</p>
     <div class="header-imza">✍️ Özgür SARSILMAZ</div>
 </div>
 """,
