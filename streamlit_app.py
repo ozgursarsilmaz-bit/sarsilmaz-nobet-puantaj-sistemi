@@ -59,7 +59,13 @@ TUM_PERSONEL_VERISI = {
 st.markdown(
     """
 <style>
-    /* Sağ üstteki GitHub ikonunu, View Code ve Edit butonlarını tamamen gizler */
+    /* Üst menü boşluğunu sıfırlayıp başlığı yukarı çekme */
+    .main .block-container {
+        padding-top: 1.2rem !important;
+        padding-bottom: 2rem !important;
+    }
+    
+    /* Sağ üstteki GitHub ikonunu gizleme */
     [data-testid="stHeader"] {
         display: none !important;
     }
@@ -68,13 +74,37 @@ st.markdown(
     }
 
     .main { background-color: #F8F9FA; }
+    
+    /* İnce, Kibar ve İmzalı Başlık Kartı */
     .header-box {
         background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
         color: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
-        margin-bottom: 15px;
+        padding: 12px 20px;
+        border-radius: 10px;
+        box-shadow: 0 3px 8px rgba(13, 110, 253, 0.15);
+        margin-bottom: 12px;
+        position: relative;
+    }
+    .header-box h1 {
+        margin: 0;
+        font-size: 1.35rem !important;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .header-box p {
+        margin: 2px 0 0 0;
+        opacity: 0.88;
+        font-size: 0.82rem !important;
+    }
+    .header-imza {
+        position: absolute;
+        bottom: 6px;
+        right: 15px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        opacity: 0.75;
+        letter-spacing: 0.5px;
+        font-style: italic;
     }
     div[data-testid="stMetric"] {
         background-color: #FFFFFF;
@@ -220,8 +250,9 @@ def tr_norm(text):
 st.markdown(
     """
 <div class="header-box">
-    <h1 style="margin:0; font-size: 1.8rem; font-weight: 800;">🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
-    <p style="margin:3px 0 0 0; opacity: 0.9; font-size: 0.95rem;">Cuma/Cumartesi/Pazar Dengeli Dağılım & Adil Saat Optimizasyonu</p>
+    <h1>🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
+    <p>Cuma/Cumartesi/Pazar Dengeli Dağılım & Adil Saat Optimizasyonu</p>
+    <div class="header-imza">✍️ Özgür SARSILMAZ</div>
 </div>
 """,
     unsafe_allow_html=True,
