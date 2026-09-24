@@ -200,7 +200,7 @@ personel_birimleri = {
     "ŞADUMAN YALÇIN": "PCR",
     "ŞENEL TAŞ": "PCR",
     "ŞENGÜL URLU": "Mikro",
-    "ŞÜKRAN KAYA": "Kültür",
+    "ŞÜKRAN KAYA": "Mikro",
     "ZOZAN ATLI": "Kültür",
 }
 
