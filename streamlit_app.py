@@ -19,7 +19,7 @@ st.set_page_config(
 # --- TAM PERSONEL VERİTABANI (Birim ve Muafiyet) ---
 TUM_PERSONEL_VERISI = {
     "ÖZGÜR SARSILMAZ": {"birim": "Mikro", "muaf": False},
-    "AYSEL BOZAN": {"birim": "Mikro", "muaf": False},
+    "AYSEL BOZAN": {"birim": "Mikro", "muaf": True},
     "AYŞEGÜL SARUHAN": {"birim": "Kültür", "muaf": True},
     "BELGİN PARİN": {"birim": "Mikro", "muaf": True},
     "BELGİN UYSAL": {"birim": "PCR", "muaf": False},
@@ -41,7 +41,7 @@ TUM_PERSONEL_VERISI = {
     "MURAT GENCER": {"birim": "PCR", "muaf": False},
     "MUSTAFA HARTOĞLU": {"birim": "Kültür", "muaf": False},
     "MUSTAFA TOSUN": {"birim": "Mikro", "muaf": False},
-    "MÜCELLÂ MANTAR": {"birim": "Mikro", "muaf": False},
+    "MÜCELLA MANTAR": {"birim": "Mikro", "muaf": False},
     "ÖZTÜRK MAVİŞ": {"birim": "Mikro", "muaf": False},
     "REMZİYE AKSOY": {"birim": "Mikro", "muaf": False},
     "SEÇİL EMİR YILDIRAK": {"birim": "PCR", "muaf": False},
