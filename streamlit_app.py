@@ -4,8 +4,8 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-import pandas as pd
 from ortools.sat.python import cp_model
+import pandas as pd
 import streamlit as st
 
 # --- SAYFA YAPILANDIRMASI ---
@@ -16,8 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-# --- ÖZEL CSS TASARIMI ---
+# --- ÖZEL CSS TASARIMI (Sıkılaştırılmış Giriş Ekranı) ---
 st.markdown(
     """
 <style>
@@ -25,36 +24,36 @@ st.markdown(
     .header-box {
         background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
         color: white;
-        padding: 24px;
-        border-radius: 16px;
+        padding: 20px;
+        border-radius: 12px;
         box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
-        margin-bottom: 25px;
+        margin-bottom: 15px;
     }
     div[data-testid="stMetric"] {
         background-color: #FFFFFF;
         border: 1px solid #E9ECEF;
-        padding: 15px 20px;
-        border-radius: 12px;
+        padding: 10px 14px;
+        border-radius: 10px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.03);
     }
     .section-title {
-        font-size: 1.2rem;
+        font-size: 1.1rem;
         font-weight: 700;
         color: #212529;
-        margin-bottom: 15px;
+        margin-bottom: 10px;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
     }
     .stButton>button {
         width: 100%;
         background: linear-gradient(135deg, #198754 0%, #146c43 100%);
         color: white;
         border: none;
-        padding: 12px 24px;
-        font-size: 1.1rem;
+        padding: 10px 20px;
+        font-size: 1rem;
         font-weight: 600;
-        border-radius: 10px;
+        border-radius: 8px;
         box-shadow: 0 4px 10px rgba(25, 135, 84, 0.2);
         transition: all 0.3s ease;
     }
@@ -64,35 +63,47 @@ st.markdown(
         box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3);
     }
 
-    /* Personel izin / sabit nöbet giriş tablosu */
-    /* Kompakt personel giriş tablosu: 13-15 kişi tek ekranda görülebilsin. */
+    /* --- KOMPAKT PERSONEL GİRİŞ TABLOSU DÜZENLEMELERİ --- */
+    /* Streamlit varsayılan dikey sütun boşluklarını (gap) sıfırla */
+    [data-testid="stHorizontalBlock"] {
+        align-items: center !important;
+        gap: 0.5rem !important;
+    }
+    div[data-testid="column"] {
+        padding: 0px !important;
+    }
+
     .personel-giris-baslik {
         font-weight: 700;
-        font-size: 0.78rem;
-        color: #212529;
-        padding: 2px 6px 4px 6px;
+        font-size: 0.75rem;
+        color: #495057;
+        padding: 2px 4px;
         white-space: nowrap;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
     .personel-giris-adi {
-        min-height: 30px;
-        height: 30px;
+        min-height: 28px;
+        height: 28px;
         display: flex;
         align-items: center;
         font-weight: 600;
         font-size: 0.78rem;
-        padding: 1px 6px;
+        color: #212529;
+        padding: 0 4px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
     .personel-giris-ayirici {
-        margin: 0;
-        padding: 0;
+        margin: 2px 0 !important;
+        padding: 0 !important;
         height: 1px;
         border: 0;
-        border-top: 1px solid #E9ECEF;
+        border-top: 1px solid #EDEFF1;
     }
-    /* Çok sayıda gün seçilince satır büyümesin; seçili günler alan içinde kayar. */
+
+    /* MultiSelect kompakt görünüm ve kaydırma ayarları */
     div[data-testid="stMultiSelect"] {
         margin: 0 !important;
         padding: 0 !important;
@@ -102,31 +113,32 @@ st.markdown(
         padding: 0 !important;
     }
     div[data-testid="stMultiSelect"] div[data-baseweb="select"] {
-        min-height: 30px !important;
-        height: 30px !important;
+        min-height: 28px !important;
+        height: 28px !important;
+        border-radius: 6px !important;
     }
     div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
-        max-height: 30px !important;
-        min-height: 30px !important;
+        max-height: 28px !important;
+        min-height: 28px !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        padding: 1px 4px !important;
+        padding: 0px 4px !important;
         align-content: center;
     }
     div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        font-size: 0.70rem !important;
-        line-height: 18px !important;
-        height: 20px !important;
+        font-size: 0.68rem !important;
+        line-height: 16px !important;
+        height: 18px !important;
         margin: 1px 2px 1px 0 !important;
         padding: 0 4px !important;
     }
     div[data-testid="stMultiSelect"] [data-baseweb="tag"] span {
-        font-size: 0.70rem !important;
+        font-size: 0.68rem !important;
     }
     div[data-testid="stMultiSelect"] input {
-        font-size: 0.72rem !important;
+        font-size: 0.70rem !important;
     }
-    /* Streamlit'in widget alt boşluğunu da küçült. */
+    /* Widget altındaki gereksiz boşluğu sil */
     div[data-testid="stMultiSelect"] + div {
         display: none !important;
     }
@@ -219,8 +231,8 @@ def tr_norm(text):
 st.markdown(
     """
 <div class="header-box">
-    <h1 style="margin:0; font-size: 2rem; font-weight: 800;">🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
-    <p style="margin:5px 0 0 0; opacity: 0.9; font-size: 1rem;">Cuma/Cumartesi/Pazar Dengeli Dağılım & Adil Saat Optimizasyonu</p>
+    <h1 style="margin:0; font-size: 1.8rem; font-weight: 800;">🏥 Mikrobiyoloji Laboratuvarı Nöbet Dağılım ve Puantaj Sistemi</h1>
+    <p style="margin:3px 0 0 0; opacity: 0.9; font-size: 0.95rem;">Cuma/Cumartesi/Pazar Dengeli Dağılım & Adil Saat Optimizasyonu</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -234,15 +246,13 @@ with col_yil:
   yil = st.number_input("Yıl", value=2026, min_value=2024, max_value=2030)
 
 with col_ay:
-  ay = st.selectbox("Ay", list(range(1, 13)), index=9)  # 10 = Ekim
+  ay = st.selectbox("Ay", list(range(1, 13)), index=9)
 
 _, gun_sayisi = calendar.monthrange(yil, ay)
 
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
-    value=(
-        "ÖZGÜR SARSILMAZ"
-    ),
+    value="ÖZGÜR SARSILMAZ",
     height=200,
 )
 personeller = [
@@ -352,10 +362,6 @@ def get_prev(p_name, category):
 
 
 # --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
-# Tek satır: PERSONEL | MAZERET / İZİN | SABİT / ZORUNLU NÖBET
-# Seçilen günler yalnızca 1, 2, 3 ... şeklinde görünür.
-# Çok sayıda seçimde alan kendi içinde kaydırılır; personel satırı kaybolmaz.
-
 st.markdown(
     '<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>',
     unsafe_allow_html=True,
@@ -366,8 +372,8 @@ sabit_nobetler = {}
 toplam_izin_sayisi = 0
 toplam_sabit_sayisi = 0
 
-# Başlık satırı
-baslik_personel, baslik_izin, baslik_sabit = st.columns([1.25, 2.0, 2.0])
+# Başlık satırı - Daraltılmış oranlar [1.1, 1.8, 1.8]
+baslik_personel, baslik_izin, baslik_sabit = st.columns([1.1, 1.8, 1.8])
 
 with baslik_personel:
   st.markdown(
@@ -387,16 +393,15 @@ with baslik_sabit:
       unsafe_allow_html=True,
   )
 
-# Sadece gün numaraları gösterilir.
-# Hesaplama tarafındaki mevcut 1..gun_sayisi ve 0 tabanlı dönüşüm korunur.
 gun_secenekleri = list(range(1, gun_sayisi + 1))
 
+# Satır içi personel girdileri
 for idx, p in enumerate(personeller):
-  col_personel, col_izin, col_sabit = st.columns([1.25, 2.0, 2.0])
+  col_personel, col_izin, col_sabit = st.columns([1.1, 1.8, 1.8])
 
   with col_personel:
     st.markdown(
-        f'<div class="personel-giris-adi">{p}</div>',
+        f'<div class="personel-giris-adi" title="{p}">{p}</div>',
         unsafe_allow_html=True,
     )
 
@@ -855,7 +860,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
         pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
 
-        # Her kişiye ayda en fazla 1 Cuma, 1 Cumartesi ve 1 Pazar yazılabilir
         model.Add(cuma_sayisi <= 1)
         model.Add(cumartesi_sayisi <= 1)
         model.Add(pazar_sayisi <= 1)
