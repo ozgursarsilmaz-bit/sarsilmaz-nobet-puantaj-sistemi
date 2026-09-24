@@ -162,6 +162,14 @@ st.markdown(
     div[data-testid="stMultiSelect"] + div { display: none !important; }
 </style>
 """,
+    /* Sağ üstteki GitHub "View code", Star ve Edit ikonlarını gizle */
+.stAppHeader {
+    display: none !important;
+}
+/* Veya sadece GitHub butonunu ve araç çubuğunu gizlemek için */
+header[data-testid="stHeader"] {
+    display: none !important;
+}
     unsafe_allow_html=True,
 )
 
