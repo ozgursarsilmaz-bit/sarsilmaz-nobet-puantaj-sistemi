@@ -59,6 +59,14 @@ TUM_PERSONEL_VERISI = {
 st.markdown(
     """
 <style>
+    /* Sağ üstteki GitHub ikonunu, View Code ve Edit butonlarını tamamen gizler */
+    [data-testid="stHeader"] {
+        display: none !important;
+    }
+    .stAppHeader {
+        display: none !important;
+    }
+
     .main { background-color: #F8F9FA; }
     .header-box {
         background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
@@ -162,14 +170,6 @@ st.markdown(
     div[data-testid="stMultiSelect"] + div { display: none !important; }
 </style>
 """,
-    /* Sağ üstteki GitHub "View code", Star ve Edit ikonlarını gizle */
-.stAppHeader {
-    display: none !important;
-}
-/* Veya sadece GitHub butonunu ve araç çubuğunu gizlemek için */
-header[data-testid="stHeader"] {
-    display: none !important;
-}
     unsafe_allow_html=True,
 )
 
