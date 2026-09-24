@@ -16,6 +16,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- ŞİFRE VE GÜVENLİK AYARLARI ---
+SIFRE = "Sars.2026"
+
+st.sidebar.title("⚙️ Yönetim Paneli")
+
+sifre_aktif = st.sidebar.checkbox(
+    "🔒 Şifre Korumasını Aktif Et",
+    value=False,
+    key="sifre_toggle",
+    help="İşaretlendiğinde uygulamaya erişim için şifre girilmesi gerekir.",
+)
+
+if "authenticated" not in st.session_state:
+  st.session_state["authenticated"] = not sifre_aktif
+
+if sifre_aktif:
+  if not st.session_state.get("authenticated", False):
+    st.sidebar.subheader("🔒 Giriş Yap")
+    girilen_sifre = st.sidebar.text_input(
+        "Uygulama Şifresi", type="password", key="password_input"
+    )
+
+    if st.sidebar.button("Giriş Yap"):
+      if girilen_sifre == SIFRE:
+        st.session_state["authenticated"] = True
+        st.rerun()
+      else:
+        st.sidebar.error("❌ Hatalı şifre!")
+
+    st.warning("⚠️ Lütfen devam etmek için sol menüden şifrenizi giriniz.")
+    st.stop()
+else:
+  st.session_state["authenticated"] = True
 
 # --- ÖZEL CSS TASARIMI ---
 st.markdown(
@@ -62,6 +95,43 @@ st.markdown(
         background: linear-gradient(135deg, #146c43 0%, #0f5132 100%);
         transform: translateY(-1px);
         box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3);
+    }
+
+    /* Personel izin / sabit nöbet giriş tablosu */
+    .personel-giris-baslik {
+        font-weight: 700;
+        font-size: 0.90rem;
+        color: #212529;
+        padding: 5px 8px 8px 8px;
+    }
+    .personel-giris-adi {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        font-weight: 600;
+        font-size: 0.90rem;
+        padding: 4px 8px;
+    }
+    .personel-giris-ayirici {
+        margin: 3px 0 7px 0;
+        border: 0;
+        border-top: 1px solid #E9ECEF;
+    }
+    /* Çok sayıda gün seçilince satır sonsuza kadar büyümesin. */
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] {
+        min-height: 42px;
+    }
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+        max-height: 72px;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+        font-size: 0.80rem;
+        margin: 2px 3px 2px 0;
+    }
+    div[data-testid="stMultiSelect"] [data-baseweb="tag"] span {
+        font-size: 0.80rem;
     }
 </style>
 """,
@@ -174,7 +244,8 @@ _, gun_sayisi = calendar.monthrange(yil, ay)
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
     value=(
-        "ÖZGÜR SARSILMAZ"
+        "BELGİN UYSAL\nKEVSER DUMLU\nMURAT GENCER\nSEÇİL YILDIRAK\nSUNA"
+        " SARSILMAZ\nŞADUMAN YALÇIN\nŞENEL TAŞ"
     ),
     height=200,
 )
@@ -237,73 +308,41 @@ gecmis_istatistik = {}
 if uploaded_file is not None:
   try:
     xls = pd.ExcelFile(uploaded_file)
+    df_gecmis = pd.read_excel(xls, sheet_name=0)
 
-    # Öncelik: uygulamanın kendi ürettiği "İstatistik & Mesai Yükü" sekmesi.
-    # Eski/manuel Excel dosyalarında ise ilk sekmedeki düz gün sütunları desteklenir.
-    if "İstatistik & Mesai Yükü" in xls.sheet_names:
-      df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü", header=[0, 1])
-      day_names = [
-          "Pazartesi", "Salı", "Çarşamba", "Perşembe",
-          "Cuma", "Cumartesi", "Pazar"
-      ]
+    col_mapping = {}
+    for col in df_gecmis.columns:
+      norm_key = tr_norm(col)
+      col_mapping[norm_key] = col
 
-      for _, row in df_gecmis.iterrows():
-        p_name = str(row.iloc[0]).strip().upper()
-        if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL", "NAN"]:
-          continue
+    name_col = df_gecmis.columns[0]
 
-        p_dict = {}
-        for g in day_names:
-          val = 0
-          # Devir sütununu al; yoksa Toplam-Bu Ay üzerinden geri hesapla.
-          for col in df_gecmis.columns:
-            if isinstance(col, tuple) and tr_norm(col[0]) == tr_norm(g):
-              sub = tr_norm(col[1])
-              if sub == "devir":
-                try:
-                  val = int(row[col]) if pd.notna(row[col]) else 0
-                except (ValueError, TypeError):
-                  val = 0
-                break
-          p_dict[g] = val
+    for _, row in df_gecmis.iterrows():
+      p_name = str(row[name_col]).strip().upper()
+      if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL"]:
+        continue
 
-        gecmis_istatistik[p_name] = p_dict
-
-    else:
-      df_gecmis = pd.read_excel(xls, sheet_name=0)
-      col_mapping = {}
-      for col in df_gecmis.columns:
-        norm_key = tr_norm(col)
-        col_mapping[norm_key] = col
-
-      name_col = df_gecmis.columns[0]
-
-      for _, row in df_gecmis.iterrows():
-        p_name = str(row[name_col]).strip().upper()
-        if not p_name or p_name in ["AD SOYAD", "ADI SOYADI", "PERSONEL", "NAN"]:
-          continue
-
-        p_dict = {}
-        for g in [
-            "Pazartesi",
-            "Salı",
-            "Çarşamba",
-            "Perşembe",
-            "Cuma",
-            "Cumartesi",
-            "Pazar",
-        ]:
-          g_norm = tr_norm(g)
-          if g_norm in col_mapping:
-            try:
-              val = int(row[col_mapping[g_norm]]) if pd.notna(row[col_mapping[g_norm]]) else 0
-            except (ValueError, TypeError):
-              val = 0
-          else:
+      p_dict = {}
+      for g in [
+          "Pazartesi",
+          "Salı",
+          "Çarşamba",
+          "Perşembe",
+          "Cuma",
+          "Cumartesi",
+          "Pazar",
+      ]:
+        g_norm = tr_norm(g)
+        if g_norm in col_mapping:
+          try:
+            val = int(row[col_mapping[g_norm]])
+          except (ValueError, TypeError):
             val = 0
-          p_dict[g] = val
+        else:
+          val = 0
+        p_dict[g] = val
 
-        gecmis_istatistik[p_name] = p_dict
+      gecmis_istatistik[p_name] = p_dict
 
     st.sidebar.success(
         f"✅ {len(gecmis_istatistik)} personelin devir verileri yüklendi!"
@@ -317,47 +356,83 @@ def get_prev(p_name, category):
 
 
 # --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
-col_count = 2
+# Tek satır: PERSONEL | MAZERET / İZİN | SABİT / ZORUNLU NÖBET
+# Seçilen günler yalnızca 1, 2, 3 ... şeklinde görünür.
+# Çok sayıda seçimde alan kendi içinde kaydırılır; personel satırı kaybolmaz.
 
 st.markdown(
-    '<div class="section-title">🏖️ Personel İzin ve Mazeret Girişleri</div>',
+    '<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>',
     unsafe_allow_html=True,
 )
+
 izinler = {}
-cols_izin = st.columns(col_count)
+sabit_nobetler = {}
 toplam_izin_sayisi = 0
+toplam_sabit_sayisi = 0
+
+# Başlık satırı
+baslik_personel, baslik_izin, baslik_sabit = st.columns([1.15, 2.4, 2.4])
+
+with baslik_personel:
+  st.markdown(
+      '<div class="personel-giris-baslik">👤 PERSONEL</div>',
+      unsafe_allow_html=True,
+  )
+
+with baslik_izin:
+  st.markdown(
+      '<div class="personel-giris-baslik">🏖️ MAZERET / İZİN GÜNLERİ</div>',
+      unsafe_allow_html=True,
+  )
+
+with baslik_sabit:
+  st.markdown(
+      '<div class="personel-giris-baslik">📌 SABİT / ZORUNLU NÖBET GÜNLERİ</div>',
+      unsafe_allow_html=True,
+  )
+
+# Sadece gün numaraları gösterilir.
+# Hesaplama tarafındaki mevcut 1..gun_sayisi ve 0 tabanlı dönüşüm korunur.
+gun_secenekleri = list(range(1, gun_sayisi + 1))
 
 for idx, p in enumerate(personeller):
-  with cols_izin[idx % col_count]:
+  col_personel, col_izin, col_sabit = st.columns([1.15, 2.4, 2.4])
+
+  with col_personel:
+    st.markdown(
+        f'<div class="personel-giris-adi">{p}</div>',
+        unsafe_allow_html=True,
+    )
+
+  with col_izin:
     selected_days = st.multiselect(
-        f"**{p}** İzin Günleri:",
-        options=list(range(1, gun_sayisi + 1)),
+        "İzin Günleri",
+        options=gun_secenekleri,
         default=[],
         key=f"leave_{p}",
+        label_visibility="collapsed",
+        placeholder="Gün seçin...",
     )
     izinler[p] = [d - 1 for d in selected_days]
     toplam_izin_sayisi += len(selected_days)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-st.markdown(
-    '<div class="section-title">📌 Personel Sabit / Zorunlu Nöbet Girişleri</div>',
-    unsafe_allow_html=True,
-)
-sabit_nobetler = {}
-cols_sabit = st.columns(col_count)
-toplam_sabit_sayisi = 0
-
-for idx, p in enumerate(personeller):
-  with cols_sabit[idx % col_count]:
+  with col_sabit:
     selected_sabit_days = st.multiselect(
-        f"**{p}** Sabit Nöbet Günleri:",
-        options=list(range(1, gun_sayisi + 1)),
+        "Sabit Nöbet Günleri",
+        options=gun_secenekleri,
         default=[],
         key=f"forced_{p}",
+        label_visibility="collapsed",
+        placeholder="Gün seçin...",
     )
     sabit_nobetler[p] = [d - 1 for d in selected_sabit_days]
     toplam_sabit_sayisi += len(selected_sabit_days)
+
+  if idx < len(personeller) - 1:
+    st.markdown(
+        '<hr class="personel-giris-ayirici">',
+        unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -566,16 +641,6 @@ def generate_3_tab_excel(
   c_tnb.alignment = align_center
   c_tnb.border = border_cell
 
-  col_counter += 1
-  ws2.merge_cells(
-      start_row=1, start_column=col_counter, end_row=2, end_column=col_counter
-  )
-  c_kum = ws2.cell(row=1, column=col_counter, value="DEVİR+BU AY")
-  c_kum.font = font_header
-  c_kum.fill = fill_header
-  c_kum.alignment = align_center
-  c_kum.border = border_cell
-
   for r_idx in [1, 2]:
     for c_idx in range(1, col_counter + 1):
       ws2.cell(row=r_idx, column=c_idx).border = border_cell
@@ -618,16 +683,6 @@ def generate_3_tab_excel(
     cell_nobet.font = font_bold
     cell_nobet.alignment = align_center
     cell_nobet.border = border_cell
-
-    cell_kum = ws2.cell(
-        row=p_idx,
-        column=c_i + 2,
-        value=sum(gecmis_istatistik.get(p, {}).get(g, 0) for g in gunler_listesi)
-        + bu_ay_toplam_nobet,
-    )
-    cell_kum.font = font_bold
-    cell_kum.alignment = align_center
-    cell_kum.border = border_cell
 
   ws2.column_dimensions["A"].width = 25
 
@@ -767,15 +822,15 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1)) <= 1
         )
 
-    # PERŞEMBE -> AYNI HAFTANIN PAZARI YASAĞI
+    # DİNAMİK PERŞEMBE - PAZAR YASAĞI
     if persembe_pazar_yasagi:
       for d in range(gun_sayisi - 3):
-        if datetime.date(yil, ay, d + 1).weekday() == 3:
+        if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
           for p in personeller:
             if p not in esnek_personel:
               model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
-    # KİŞİLER ARASI ÖZEL MESAFE / ÇAKIŞMA KURALLARI
+    # KİŞİLER ARASI ÖZEL MESAFE KURALLARI
     for rule in kisi_kisitlari:
       p1 = rule["ana"]
       aralik = rule["aralik"]
@@ -797,14 +852,18 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
     pazar_indeksleri = gun_kategorisi_indeksleri([6])
 
-    # CUMA / CUMARTESİ / PAZAR AYRI AYRI EN FAZLA 1
+    # CUMA / CUMARTESİ / PAZAR TEKİL MAKSİMUM 1 NÖBET KURALI
     if cuma_haftasonu_siki_kural:
       for p in personeller:
-        model.Add(sum(x[(p, d)] for d in cuma_indeksleri) <= 1)
-        model.Add(sum(x[(p, d)] for d in cumartesi_indeksleri) <= 1)
-        model.Add(sum(x[(p, d)] for d in pazar_indeksleri) <= 1)
+        cuma_sayisi = sum(x[(p, d)] for d in cuma_indeksleri)
+        cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
+        pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
 
-    # Nöbet saatleri
+        # Her kişiye ayda en fazla 1 Cuma, 1 Cumartesi ve 1 Pazar yazılabilir
+        model.Add(cuma_sayisi <= 1)
+        model.Add(cumartesi_sayisi <= 1)
+        model.Add(pazar_sayisi <= 1)
+
     gun_saatleri = []
     for d in range(gun_sayisi):
       w = datetime.date(yil, ay, d + 1).weekday()
@@ -816,69 +875,29 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         h = 24
       gun_saatleri.append(h)
 
-    # ------------------------------------------------------------------
-    # ADALET OPTİMİZASYONU
-    # 1) BU AY TOPLAM NÖBET SAATİ FARKI: mutlak birinci öncelik
-    # 2) BU AY TOPLAM NÖBET GÜNÜ FARKI
-    # 3) DEVİR + BU AY TOPLAM NÖBET GÜNÜ FARKI
-    # 4) DEVİR + BU AY GÜN TİPİ DAĞILIMI farkları
-    #
-    # Böylece önce saat yükü, sonra nöbet sayısı, sonra geçmiş aydan gelen
-    # yükün telafisi optimize edilir. Gün tipi dengelemesi son aşamadır.
-    # ------------------------------------------------------------------
-
     max_bu_ay_saat = model.NewIntVar(0, 1000, "max_bu_ay_saat")
     min_bu_ay_saat = model.NewIntVar(0, 1000, "min_bu_ay_saat")
-    saat_vars = {}
 
     for p in personeller:
-      saat = model.NewIntVar(0, 1000, f"saat_{p}")
-      model.Add(saat == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi)))
-      saat_vars[p] = saat
-      model.Add(saat <= max_bu_ay_saat)
-      model.Add(saat >= min_bu_ay_saat)
+      bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
+      model.Add(
+          bu_ay_saat
+          == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi))
+      )
+      model.Add(bu_ay_saat <= max_bu_ay_saat)
+      model.Add(bu_ay_saat >= min_bu_ay_saat)
 
     saat_farki = model.NewIntVar(0, 1000, "saat_farki")
     model.Add(saat_farki == max_bu_ay_saat - min_bu_ay_saat)
 
-    max_bu_ay_gun = model.NewIntVar(0, gun_sayisi, "max_bu_ay_gun")
-    min_bu_ay_gun = model.NewIntVar(0, gun_sayisi, "min_bu_ay_gun")
-    bu_ay_gun_vars = {}
-
-    for p in personeller:
-      gun = model.NewIntVar(0, gun_sayisi, f"gun_{p}")
-      model.Add(gun == sum(x[(p, d)] for d in range(gun_sayisi)))
-      bu_ay_gun_vars[p] = gun
-      model.Add(gun <= max_bu_ay_gun)
-      model.Add(gun >= min_bu_ay_gun)
-
-    gun_farki = model.NewIntVar(0, gun_sayisi, "gun_farki")
-    model.Add(gun_farki == max_bu_ay_gun - min_bu_ay_gun)
-
-    max_kumulatif_gun = model.NewIntVar(0, 200, "max_kumulatif_gun")
-    min_kumulatif_gun = model.NewIntVar(0, 200, "min_kumulatif_gun")
-    kumulatif_gun_vars = {}
-
-    for p in personeller:
-      prev_total = sum(get_prev(p, g) for g in gun_saat_haritasi)
-      kum_gun = model.NewIntVar(0, 200, f"kumulatif_gun_{p}")
-      model.Add(kum_gun == prev_total + bu_ay_gun_vars[p])
-      kumulatif_gun_vars[p] = kum_gun
-      model.Add(kum_gun <= max_kumulatif_gun)
-      model.Add(kum_gun >= min_kumulatif_gun)
-
-    kumulatif_gun_farki = model.NewIntVar(0, 200, "kumulatif_gun_farki")
-    model.Add(kumulatif_gun_farki == max_kumulatif_gun - min_kumulatif_gun)
-
-    # Gün tipi dağılımı: geçmiş devir + bu ay toplamı mümkün olduğunca dengeli.
     kategoriler = {
-        "Pazartesi": ([0], 1),
-        "Salı": ([1], 1),
-        "Çarşamba": ([2], 1),
-        "Perşembe": ([3], 1),
-        "Cuma": ([4], 1),
-        "Cumartesi": ([5], 1),
-        "Pazar": ([6], 1),
+        "Pazartesi": ([0], 500),
+        "Salı": ([1], 500),
+        "Çarşamba": ([2], 500),
+        "Perşembe": ([3], 1000),
+        "Cuma": ([4], 1500),
+        "Cumartesi": ([5], 2500),
+        "Pazar": ([6], 2000),
     }
 
     kategori_farklari = []
@@ -888,23 +907,18 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       min_kat = model.NewIntVar(0, 100, f"min_{kat_adi}")
 
       for p in personeller:
-        kumulatif_kat = get_prev(p, kat_adi) + sum(x[(p, d)] for d in day_indices)
-        model.Add(kumulatif_kat <= max_kat)
-        model.Add(kumulatif_kat >= min_kat)
+        bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
+        kumulatif_kat_sayisi = get_prev(p, kat_adi) + bu_ay_kat_sayisi
+        model.Add(kumulatif_kat_sayisi <= max_kat)
+        model.Add(kumulatif_kat_sayisi >= min_kat)
 
       fark = model.NewIntVar(0, 100, f"fark_{kat_adi}")
       model.Add(fark == max_kat - min_kat)
       kategori_farklari.append(agirlik * fark)
 
     # HEDEF FONKSİYONU
-    # Ağırlıklar bilinçli olarak katmanlıdır:
-    # Saat farkındaki 1 birimlik iyileşme, altındaki tüm kriterlerden önemlidir.
-    # Sonra gün sayısı, sonra devir+bu ay toplam gün, sonra gün tipi gelir.
     model.Minimize(
-        1_000_000_000 * saat_farki
-        + 1_000_000 * gun_farki
-        + 1_000 * kumulatif_gun_farki
-        + sum(kategori_farklari)
+        100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
     )
 
     solver = cp_model.CpSolver()
@@ -948,7 +962,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
       columns_tuples.append(("T.NöbetSaati", ""))
       columns_tuples.append(("TOPLAM NÖBET", ""))
-      columns_tuples.append(("DEVİR+BU AY", ""))
 
       multi_cols = pd.MultiIndex.from_tuples(columns_tuples)
       istatistik_rows = []
@@ -978,7 +991,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
         row_dict[("T.NöbetSaati", "")] = bu_ay_saat
         row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
-        row_dict[("DEVİR+BU AY", "")] = sum(get_prev(p, g) for g in gunler_listesi) + bu_ay_toplam_nobet
 
         istatistik_rows.append(row_dict)
 
