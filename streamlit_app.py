@@ -16,7 +16,46 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ÖZEL CSS TASARIMI (Sıkılaştırılmış Giriş Ekranı) ---
+# --- TAM PERSONEL VERİTABANI (Birim ve Muafiyet) ---
+TUM_PERSONEL_VERISI = {
+    "ÖZGÜR SARSILMAZ": {"birim": "Mikro", "muaf": False},
+    "AYSEL BOZAN": {"birim": "Mikro", "muaf": False},
+    "AYŞEGÜL SARUHAN": {"birim": "Kültür", "muaf": True},
+    "BELGİN PARİN": {"birim": "Mikro", "muaf": True},
+    "BELGİN UYSAL": {"birim": "PCR", "muaf": False},
+    "BİRSEL KAYA": {"birim": "Kültür", "muaf": False},
+    "DENİZ YAMAN": {"birim": "Mikro", "muaf": True},
+    "DURMUŞ AKTÜRK": {"birim": "Mikro", "muaf": False},
+    "ESRA ÇORAK": {"birim": "Mikro", "muaf": True},
+    "GÜLÇİN HORDACI": {"birim": "Kültür", "muaf": False},
+    "HACER BÜKÜM": {"birim": "Kültür", "muaf": False},
+    "HİCRAN ATA AYHAN": {"birim": "Kültür", "muaf": False},
+    "HÜMEYRA YEŞİLTAŞ": {"birim": "Mikro", "muaf": False},
+    "İBRAHİM ER": {"birim": "Kültür", "muaf": False},
+    "KADRİYE ARDIÇ": {"birim": "Mikro", "muaf": False},
+    "KEVSER DUMLU": {"birim": "PCR", "muaf": False},
+    "MEHMET BAĞCI": {"birim": "Mikro", "muaf": False},
+    "MELEK AKKAŞ": {"birim": "Mikro", "muaf": False},
+    "MELEK BARUT": {"birim": "Kültür", "muaf": False},
+    "MUHAMMED ATABERK YILDIZ": {"birim": "Kültür", "muaf": False},
+    "MURAT GENCER": {"birim": "PCR", "muaf": False},
+    "MUSTAFA HARTOĞLU": {"birim": "Kültür", "muaf": False},
+    "MUSTAFA TOSUN": {"birim": "Mikro", "muaf": False},
+    "MÜCELLÂ MANTAR": {"birim": "Mikro", "muaf": False},
+    "ÖZTÜRK MAVİŞ": {"birim": "Mikro", "muaf": False},
+    "REMZİYE AKSOY": {"birim": "Mikro", "muaf": False},
+    "SEÇİL EMİR YILDIRAK": {"birim": "PCR", "muaf": False},
+    "SEMRA KUMRUOĞLU": {"birim": "Kültür", "muaf": True},
+    "SUNA SARSILMAZ": {"birim": "PCR", "muaf": False},
+    "SÜLEYMAN POLAT": {"birim": "Kültür", "muaf": False},
+    "ŞADUMAN YALÇIN": {"birim": "PCR", "muaf": False},
+    "ŞENEL TAŞ": {"birim": "PCR", "muaf": False},
+    "ŞENGÜL URLU": {"birim": "Mikro", "muaf": False},
+    "ŞÜKRAN KAYA": {"birim": "Mikro", "muaf": False},
+    "ZOZAN ATLI": {"birim": "Kültür", "muaf": True},
+}
+
+# --- ÖZEL CSS TASARIMI ---
 st.markdown(
     """
 <style>
@@ -63,15 +102,12 @@ st.markdown(
         box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3);
     }
 
-    /* --- KOMPAKT PERSONEL GİRİŞ TABLOSU DÜZENLEMELERİ --- */
-    /* Streamlit varsayılan dikey sütun boşluklarını (gap) sıfırla */
+    /* KOMPAKT TABLO TASARIMI */
     [data-testid="stHorizontalBlock"] {
         align-items: center !important;
         gap: 0.5rem !important;
     }
-    div[data-testid="column"] {
-        padding: 0px !important;
-    }
+    div[data-testid="column"] { padding: 0px !important; }
 
     .personel-giris-baslik {
         font-weight: 700;
@@ -80,7 +116,6 @@ st.markdown(
         padding: 2px 4px;
         white-space: nowrap;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
     .personel-giris-adi {
         min-height: 28px;
@@ -103,15 +138,8 @@ st.markdown(
         border-top: 1px solid #EDEFF1;
     }
 
-    /* MultiSelect kompakt görünüm ve kaydırma ayarları */
-    div[data-testid="stMultiSelect"] {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-    div[data-testid="stMultiSelect"] > div {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
+    div[data-testid="stMultiSelect"] { margin: 0 !important; padding: 0 !important; }
+    div[data-testid="stMultiSelect"] > div { margin: 0 !important; padding: 0 !important; }
     div[data-testid="stMultiSelect"] div[data-baseweb="select"] {
         min-height: 28px !important;
         height: 28px !important;
@@ -121,7 +149,6 @@ st.markdown(
         max-height: 28px !important;
         min-height: 28px !important;
         overflow-y: auto !important;
-        overflow-x: hidden !important;
         padding: 0px 4px !important;
         align-content: center;
     }
@@ -132,16 +159,7 @@ st.markdown(
         margin: 1px 2px 1px 0 !important;
         padding: 0 4px !important;
     }
-    div[data-testid="stMultiSelect"] [data-baseweb="tag"] span {
-        font-size: 0.68rem !important;
-    }
-    div[data-testid="stMultiSelect"] input {
-        font-size: 0.70rem !important;
-    }
-    /* Widget altındaki gereksiz boşluğu sil */
-    div[data-testid="stMultiSelect"] + div {
-        display: none !important;
-    }
+    div[data-testid="stMultiSelect"] + div { display: none !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -165,43 +183,6 @@ gun_saat_haritasi = {
     "Cuma": 16,
     "Cumartesi": 24,
     "Pazar": 16,
-}
-
-personel_birimleri = {
-    "ÖZGÜR SARSILMAZ": "Mikro",
-    "AYŞEGÜL SARUHAN": "Kültür",
-    "BELGİN PARİN": "Mikro",
-    "BELGİN UYSAL": "PCR",
-    "BİRSEL KAYA": "Kültür",
-    "DENİZ YAMAN": "Mikro",
-    "DURMUŞ AKTÜRK": "Mikro",
-    "ESRA ÇORAK": "Mikro",
-    "GÜLÇİN HORDACI": "Kültür",
-    "HACER BÜKÜM": "Kültür",
-    "HİCRAN ATA AYHAN": "Kültür",
-    "HÜMEYRA YEŞİLTAŞ": "Mikro",
-    "İBRAHİM ER": "Kültür",
-    "KADRİYE ARDIÇ": "Mikro",
-    "KEVSER DUMLU": "PCR",
-    "MEHMET BAĞCI": "Mikro",
-    "MELEK AKKAŞ": "Mikro",
-    "MELEK BARUT": "Kültür",
-    "MUHAMMED ATABERK YILDIZ": "Kültür",
-    "MURAT GENCER": "PCR",
-    "MUSTAFA HARTOĞLU": "Kültür",
-    "MUSTAFA TOSUN": "Mikro",
-    "MÜCELLA MANTAR": "Mikro",
-    "ÖZTÜRK MAVİŞ": "Mikro",
-    "REMZİYE AKSOY": "Mikro",
-    "SEÇİL EMİR YILDIRAK": "PCR",
-    "SEMRA KUMRUOĞLU": "Kültür",
-    "SUNA SARSILMAZ": "PCR",
-    "SÜLEYMAN POLAT": "Kültür",
-    "ŞADUMAN YALÇIN": "PCR",
-    "ŞENEL TAŞ": "PCR",
-    "ŞENGÜL URLU": "Mikro",
-    "ŞÜKRAN KAYA": "Mikro",
-    "ZOZAN ATLI": "Kültür",
 }
 
 
@@ -239,7 +220,7 @@ st.markdown(
 )
 
 # --- YÖNETİM PANELİ İÇERİĞİ ---
-st.sidebar.subheader("📅 Tarih ve Kadro")
+st.sidebar.subheader("📅 Tarih ve Birim Seçimi")
 col_yil, col_ay = st.sidebar.columns(2)
 
 with col_yil:
@@ -250,13 +231,42 @@ with col_ay:
 
 _, gun_sayisi = calendar.monthrange(yil, ay)
 
+# BİRİM SEÇİMİ
+birim_secimi = st.sidebar.selectbox(
+    "🔬 Çalışma Grubu / Birim:",
+    ["Mikro", "Kültür", "PCR", "Tüm Laboratuvar (Birleşik)"],
+    index=0,
+)
+
+# Seçilen birime göre varsayılan personelleri filtrele
+varsayilan_liste = []
+for p_adi, p_info in TUM_PERSONEL_VERISI.items():
+  if (
+      birim_secimi == "Tüm Laboratuvar (Birleşik)"
+      or p_info["birim"] == birim_secimi
+  ):
+    varsayilan_liste.append(p_adi)
+
 personel_input = st.sidebar.text_area(
     "Personel Listesi (Her satıra bir isim):",
-    value="ÖZGÜR SARSILMAZ",
-    height=200,
+    value="\n".join(varsayilan_liste),
+    height=220,
 )
-personeller = [
+
+tum_girilen_personeller = [
     p.strip().upper() for p in personel_input.split("\n") if p.strip()
+]
+
+# Aktif Nöbetçi Personeller ve Nöbet Muaf Personeller Ayrımı
+nobetci_personeller = [
+    p
+    for p in tum_girilen_personeller
+    if not TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
+]
+muaf_personeller = [
+    p
+    for p in tum_girilen_personeller
+    if TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
 ]
 
 st.sidebar.markdown("---")
@@ -285,20 +295,12 @@ persembe_pazar_yasagi = st.sidebar.checkbox(
 cuma_haftasonu_siki_kural = st.sidebar.checkbox(
     "📌 Cuma / Cmts / Pzr Dengeli Dağılım (Maks 1 Gün)",
     value=True,
-    help=(
-        "İşaretlendiğinde bir kişiye ayda en fazla 1 Cuma, 1 Cumartesi ve 1"
-        " Pazar yazılabilir."
-    ),
 )
 
 esnek_personel = st.sidebar.multiselect(
     "🔓 Özel Esneklik Tanınacak Personel(ler):",
-    options=personeller,
+    options=nobetci_personeller,
     default=[],
-    help=(
-        "Burada seçilen kişilere Perşembe-Pazar yasağı UYGULANMAZ ve min."
-        " dinlenme süresi 1 güne düşürülür."
-    ),
 )
 
 # --- 📊 GEÇMİŞ AY ROTASYONU / DEVİR YÜKLEME PANELİ ---
@@ -307,75 +309,100 @@ st.sidebar.subheader("📊 Geçmiş Ay Rotasyonu (Önceki Ay Dosyası)")
 uploaded_file = st.sidebar.file_uploader(
     "Önceki Ayın Excel Dosyası:",
     type=["xlsx", "xls"],
-    help="Sistemin ürettiği 3 sekmeli Excel dosyasını veya eski rotasyon dosyasını yükleyin.",
+    help="Sistemin ürettiği 3 sekmeli Excel dosyasını yükleyin.",
 )
 
 gecmis_istatistik = {}
 
 if uploaded_file is not None:
-    try:
-        xls = pd.ExcelFile(uploaded_file)
-        
-        # 1. Yeni 3 Sekmeli Sistem Dosyası Yüklenmişse
-        if "İstatistik & Mesai Yükü" in xls.sheet_names:
-            df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü")
-            
-            # Üst iki satır başlık olduğu için veri 2. satırdan başlar
-            # Sütun sırası: 0:İsim, 1:Pzt Devir, 2:Pzt BuAy, 3:Pzt Toplam, 4:Salı Devir...
-            gunler_sira = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
-            
-            for r_idx in range(1, len(df_gecmis)):
-                row = df_gecmis.iloc[r_idx]
-                p_name = str(row.iloc[0]).strip().upper()
-                
-                if not p_name or p_name in ["NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
-                    continue
-                
-                p_dict = {}
-                # Her gün için "Toplam" sütun indeksleri: 3, 6, 9, 12, 15, 18, 21
-                for g_idx, g_name in enumerate(gunler_sira):
-                    toplam_col_idx = 3 + (g_idx * 3)
-                    try:
-                        val = int(row.iloc[toplam_col_idx])
-                    except (ValueError, TypeError, IndexError):
-                        val = 0
-                    p_dict[g_name] = val
-                
-                gecmis_istatistik[p_name] = p_dict
+  try:
+    xls = pd.ExcelFile(uploaded_file)
 
-        # 2. Eski Tek Sayfalı Düz Excel Dosyası Yüklenmişse (Geriye Dönük Uyumluluk)
-        else:
-            df_gecmis = pd.read_excel(xls, sheet_name=0)
-            col_mapping = {tr_norm(col): col for col in df_gecmis.columns}
-            name_col = df_gecmis.columns[0]
+    if "İstatistik & Mesai Yükü" in xls.sheet_names:
+      df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü")
+      gunler_sira = [
+          "Pazartesi",
+          "Salı",
+          "Çarşamba",
+          "Perşembe",
+          "Cuma",
+          "Cumartesi",
+          "Pazar",
+      ]
 
-            for _, row in df_gecmis.iterrows():
-                p_name = str(row[name_col]).strip().upper()
-                if not p_name or p_name in ["NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
-                    continue
+      for r_idx in range(1, len(df_gecmis)):
+        row = df_gecmis.iloc[r_idx]
+        p_name = str(row.iloc[0]).strip().upper()
 
-                p_dict = {}
-                for g in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]:
-                    g_norm = tr_norm(g)
-                    if g_norm in col_mapping:
-                        try:
-                            val = int(row[col_mapping[g_norm]])
-                        except (ValueError, TypeError):
-                            val = 0
-                    else:
-                        val = 0
-                    p_dict[g] = val
+        if not p_name or p_name in [
+            "NAN",
+            "NONE",
+            "AD SOYAD",
+            "ADI SOYADI",
+            "PERSONEL",
+        ]:
+          continue
 
-                gecmis_istatistik[p_name] = p_dict
+        p_dict = {}
+        for g_idx, g_name in enumerate(gunler_sira):
+          toplam_col_idx = 3 + (g_idx * 3)
+          try:
+            val = int(row.iloc[toplam_col_idx])
+          except (ValueError, TypeError, IndexError):
+            val = 0
+          p_dict[g_name] = val
 
-        st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri başarıyla aktarıldı!")
-    except Exception as e:
-        st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+        gecmis_istatistik[p_name] = p_dict
+    else:
+      df_gecmis = pd.read_excel(xls, sheet_name=0)
+      col_mapping = {tr_norm(col): col for col in df_gecmis.columns}
+      name_col = df_gecmis.columns[0]
+
+      for _, row in df_gecmis.iterrows():
+        p_name = str(row[name_col]).strip().upper()
+        if not p_name or p_name in [
+            "NAN",
+            "NONE",
+            "AD SOYAD",
+            "ADI SOYADI",
+            "PERSONEL",
+        ]:
+          continue
+
+        p_dict = {}
+        for g in [
+            "Pazartesi",
+            "Salı",
+            "Çarşamba",
+            "Perşembe",
+            "Cuma",
+            "Cumartesi",
+            "Pazar",
+        ]:
+          g_norm = tr_norm(g)
+          if g_norm in col_mapping:
+            try:
+              val = int(row[col_mapping[g_norm]])
+            except (ValueError, TypeError):
+              val = 0
+          else:
+            val = 0
+          p_dict[g] = val
+
+        gecmis_istatistik[p_name] = p_dict
+
+    st.sidebar.success(
+        f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!"
+    )
+  except Exception as e:
+    st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+
 
 def get_prev(p_name, category):
-    return gecmis_istatistik.get(p_name, {}).get(category, 0)
+  return gecmis_istatistik.get(p_name, {}).get(category, 0)
 
-# --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
+
+# --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ (Sadece Aktif Nöbetçiler İçin) ---
 st.markdown(
     '<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>',
     unsafe_allow_html=True,
@@ -386,7 +413,6 @@ sabit_nobetler = {}
 toplam_izin_sayisi = 0
 toplam_sabit_sayisi = 0
 
-# Başlık satırı - Daraltılmış oranlar [1.1, 1.8, 1.8]
 baslik_personel, baslik_izin, baslik_sabit = st.columns([1.1, 1.8, 1.8])
 
 with baslik_personel:
@@ -409,8 +435,7 @@ with baslik_sabit:
 
 gun_secenekleri = list(range(1, gun_sayisi + 1))
 
-# Satır içi personel girdileri
-for idx, p in enumerate(personeller):
+for idx, p in enumerate(nobetci_personeller):
   col_personel, col_izin, col_sabit = st.columns([1.1, 1.8, 1.8])
 
   with col_personel:
@@ -443,7 +468,7 @@ for idx, p in enumerate(personeller):
     sabit_nobetler[p] = [d - 1 for d in selected_sabit_days]
     toplam_sabit_sayisi += len(selected_sabit_days)
 
-  if idx < len(personeller) - 1:
+  if idx < len(nobetci_personeller) - 1:
     st.markdown(
         '<hr class="personel-giris-ayirici">',
         unsafe_allow_html=True,
@@ -451,7 +476,7 @@ for idx, p in enumerate(personeller):
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- KİŞİLER ARASI ÖZEL NÖBET ARALIĞI VE ÇAKIŞMA YASAĞI PANELİ ---
+# --- KİŞİLER ARASI ÖZEL NÖBET ARALIĞI PANELİ ---
 st.markdown(
     '<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı'
     ' Kuralları</div>',
@@ -478,7 +503,7 @@ for k_idx in range(st.session_state.kisi_kisit_sayisi):
   with c1:
     p_ana = st.selectbox(
         f"Ana Personel #{k_idx+1}:",
-        options=["Seçiniz..."] + personeller,
+        options=["Seçiniz..."] + nobetci_personeller,
         key=f"p_ana_{k_idx}",
     )
   with c2:
@@ -487,16 +512,12 @@ for k_idx in range(st.session_state.kisi_kisit_sayisi):
         min_value=0,
         max_value=15,
         value=1,
-        help=(
-            "0: Aynı gün nöbet tutamazlar. 1: Aralarında en az 1 gün boşluk"
-            " olmalı."
-        ),
         key=f"min_aralik_{k_idx}",
     )
   with c3:
     p_yasakli_list = st.multiselect(
         f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:",
-        options=[p for p in personeller if p != p_ana],
+        options=[p for p in nobetci_personeller if p != p_ana],
         key=f"p_yasakli_{k_idx}",
     )
 
@@ -513,23 +534,29 @@ with col_btn1:
 with col_btn2:
   st.button("➖ Kısıt Sil", on_click=kisit_cikar)
 
-
 # --- CANLI METRİK DASHBOARD ---
 st.markdown("<br>", unsafe_allow_html=True)
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("👥 Aktif Personel", f"{len(personeller)} Kişi")
+m1.metric("👥 Nöbetçi Kadro", f"{len(nobetci_personeller)} Kişi")
 m2.metric("📅 Ayın Gün Sayısı", f"{gun_sayisi} Gün")
 m3.metric("🎯 Nöbet Slotu", f"{gun_sayisi * gunluk_nobetci} Nöbet")
 m4.metric("🏖️ Kayıtlı İzinler", f"{toplam_izin_sayisi} Gün")
 m5.metric("📌 Sabit Nöbetler", f"{toplam_sabit_sayisi} Gün")
-m6.metric("🤝 Özel Kısıtlar", f"{len(kisi_kisitlari)} Kural")
+m6.metric("🛡️ Nöbet Muaf", f"{len(muaf_personeller)} Kişi")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 
-# --- 3 SEKMELİ ÖZEL EXCEL OLUŞTURUCU ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
-    yil, ay, personeller, nobet_dict, gecmis_istatistik, gun_sayisi
+    yil,
+    ay,
+    nobetci_personeller,
+    tum_girilen_personeller,
+    nobet_dict,
+    gecmis_istatistik,
+    gun_sayisi,
+    birim_secimi,
 ):
   wb = openpyxl.Workbook()
 
@@ -558,13 +585,13 @@ def generate_3_tab_excel(
   align_center = Alignment(horizontal="center", vertical="center")
   align_left = Alignment(horizontal="left", vertical="center")
 
-  # 1. SEKME: GÖREV LİSTESİ
+  # 1. SEKME: GÖREV LİSTESİ (Sadece Nöbetçi Personeller)
   ws1 = wb.active
   ws1.title = "Aylık Görev Listesi"
   ws1.views.sheetView[0].showGridLines = True
 
   ws1.cell(
-      row=1, column=1, value=f"{yil} yılı {ay}. Ay Nöbet Çizelgesi"
+      row=1, column=1, value=f"{yil} yılı {ay}. Ay {birim_secimi} Nöbet Çizelgesi"
   ).font = font_title
 
   headers1 = ["Tarih", "Gün", "Nöbetçi Personel"]
@@ -578,7 +605,9 @@ def generate_3_tab_excel(
   for d in range(1, gun_sayisi + 1):
     r = d + 3
     tarih = datetime.date(yil, ay, d)
-    nobetciler = [p for p in personeller if d in nobet_dict.get(p, set())]
+    nobetciler = [
+        p for p in nobetci_personeller if d in nobet_dict.get(p, set())
+    ]
 
     c1 = ws1.cell(row=r, column=1, value=tarih.strftime("%d.%m.%Y"))
     c2 = ws1.cell(row=r, column=2, value=tr_gunler[tarih.weekday()])
@@ -595,7 +624,7 @@ def generate_3_tab_excel(
   ws1.column_dimensions["B"].width = 15
   ws1.column_dimensions["C"].width = 45
 
-  # 2. SEKME: İSTATİSTİK
+  # 2. SEKME: İSTATİSTİK (Sadece Nöbetçi Personeller)
   ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
   ws2.views.sheetView[0].showGridLines = True
 
@@ -660,7 +689,7 @@ def generate_3_tab_excel(
     for c_idx in range(1, col_counter + 1):
       ws2.cell(row=r_idx, column=c_idx).border = border_cell
 
-  for p_idx, p in enumerate(personeller, 3):
+  for p_idx, p in enumerate(nobetci_personeller, 3):
     ws2.cell(row=p_idx, column=1, value=p).alignment = align_left
     ws2.cell(row=p_idx, column=1).font = font_body
     ws2.cell(row=p_idx, column=1).border = border_cell
@@ -701,7 +730,7 @@ def generate_3_tab_excel(
 
   ws2.column_dimensions["A"].width = 25
 
-  # 3. SEKME: PUANTAJ TABLOSU
+  # 3. SEKME: PUANTAJ TABLOSU (TÜM Personeller - Muaf Olanlar Hafta İçi 8 Saat)
   ws3 = wb.create_sheet("Puantaj Tablosu")
   ws3.views.sheetView[0].showGridLines = True
 
@@ -729,11 +758,12 @@ def generate_3_tab_excel(
     cell.border = border_cell
     cell.fill = fill_grey if day in grey_days else fill_header
 
-  for idx, p in enumerate(personeller):
+  for idx, p in enumerate(tum_girilen_personeller):
     r = 6 + idx
     ws3.row_dimensions[r].height = 18
 
-    birim = personel_birimleri.get(p, "Mikro")
+    p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
+    is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
 
     c_name = ws3.cell(row=r, column=1, value=p)
     c_name.fill = fill_green_bg
@@ -741,7 +771,7 @@ def generate_3_tab_excel(
     c_name.alignment = align_left
     c_name.border = border_cell
 
-    c_unit = ws3.cell(row=r, column=2, value=birim)
+    c_unit = ws3.cell(row=r, column=2, value=p_birim)
     c_unit.fill = fill_green_bg
     c_unit.font = font_body
     c_unit.alignment = align_center
@@ -758,18 +788,26 @@ def generate_3_tab_excel(
       if day in grey_days:
         cell.fill = fill_grey
 
-      if day in p_shifts:
-        cell.value = 24
-        cell.font = font_24
-      elif (day - 1) in p_shifts:
-        cell.value = "Nİ"
-        cell.font = font_ni
-      else:
+      # Muaf Personel Mantığı
+      if is_muaf:
         if day in grey_days:
           cell.value = ""
         else:
           cell.value = 8
           cell.font = font_body
+      else:
+        if day in p_shifts:
+          cell.value = 24
+          cell.font = font_24
+        elif (day - 1) in p_shifts:
+          cell.value = "Nİ"
+          cell.font = font_ni
+        else:
+          if day in grey_days:
+            cell.value = ""
+          else:
+            cell.value = 8
+            cell.font = font_body
 
   ws3.column_dimensions["A"].width = 28
   ws3.column_dimensions["B"].width = 12
@@ -788,15 +826,15 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
   hata_listesi = []
 
   for d in range(gun_sayisi):
-    musait_sayisi = sum(1 for p in personeller if d not in izinler[p])
+    musait_sayisi = sum(1 for p in nobetci_personeller if d not in izinler[p])
     if musait_sayisi < gunluk_nobetci:
       tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
       hata_listesi.append(
           f"⚠️ **{tarih_str}** ({d+1}. gün): En az {gunluk_nobetci} kişi gerekli"
-          f" ancak izinler nedeniyle sadece {musait_sayisi} kişi müsait."
+          f" ancak izinler nedeniyle sadece {musait_sayisi} nöbetçi müsait."
       )
 
-  for p in personeller:
+  for p in nobetci_personeller:
     ortak = set(izinler[p]).intersection(set(sabit_nobetler[p]))
     for d in ortak:
       tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
@@ -812,23 +850,23 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     model = cp_model.CpModel()
     x = {}
 
-    for p in personeller:
+    for p in nobetci_personeller:
       for d in range(gun_sayisi):
         x[(p, d)] = model.NewBoolVar(f"x_{p}_{d}")
 
     for d in range(gun_sayisi):
-      model.Add(sum(x[(p, d)] for p in personeller) == gunluk_nobetci)
+      model.Add(sum(x[(p, d)] for p in nobetci_personeller) == gunluk_nobetci)
 
-    for p in personeller:
+    for p in nobetci_personeller:
       for d in izinler[p]:
         model.Add(x[(p, d)] == 0)
 
-    for p in personeller:
+    for p in nobetci_personeller:
       for d in sabit_nobetler[p]:
         model.Add(x[(p, d)] == 1)
 
     # DİNAMİK MİNİMUM DİNLENME SÜRESİ
-    for p in personeller:
+    for p in nobetci_personeller:
       p_dinlenme = (
           1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
       )
@@ -841,7 +879,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     if persembe_pazar_yasagi:
       for d in range(gun_sayisi - 3):
         if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
-          for p in personeller:
+          for p in nobetci_personeller:
             if p not in esnek_personel:
               model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
@@ -867,9 +905,8 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
     pazar_indeksleri = gun_kategorisi_indeksleri([6])
 
-    # CUMA / CUMARTESİ / PAZAR TEKİL MAKSİMUM 1 NÖBET KURALI
     if cuma_haftasonu_siki_kural:
-      for p in personeller:
+      for p in nobetci_personeller:
         cuma_sayisi = sum(x[(p, d)] for d in cuma_indeksleri)
         cumartesi_sayisi = sum(x[(p, d)] for d in cumartesi_indeksleri)
         pazar_sayisi = sum(x[(p, d)] for d in pazar_indeksleri)
@@ -892,7 +929,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     max_bu_ay_saat = model.NewIntVar(0, 1000, "max_bu_ay_saat")
     min_bu_ay_saat = model.NewIntVar(0, 1000, "min_bu_ay_saat")
 
-    for p in personeller:
+    for p in nobetci_personeller:
       bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
       model.Add(
           bu_ay_saat
@@ -920,7 +957,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       max_kat = model.NewIntVar(0, 100, f"max_{kat_adi}")
       min_kat = model.NewIntVar(0, 100, f"min_{kat_adi}")
 
-      for p in personeller:
+      for p in nobetci_personeller:
         bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
         kumulatif_kat_sayisi = get_prev(p, kat_adi) + bu_ay_kat_sayisi
         model.Add(kumulatif_kat_sayisi <= max_kat)
@@ -930,7 +967,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       model.Add(fark == max_kat - min_kat)
       kategori_farklari.append(agirlik * fark)
 
-    # HEDEF FONKSİYONU
     model.Minimize(
         100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
     )
@@ -942,13 +978,13 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       st.balloons()
       st.success("✨ Nöbet çizelgesi ve Puantaj tablosu başarıyla oluşturuldu!")
 
-      nobet_dict = {p: set() for p in personeller}
+      nobet_dict = {p: set() for p in nobetci_personeller}
 
       liste_data = []
       for d in range(gun_sayisi):
         tarih = datetime.date(yil, ay, d + 1)
         nobetciler = []
-        for p in personeller:
+        for p in nobetci_personeller:
           if solver.Value(x[(p, d)]) == 1:
             nobetciler.append(p)
             nobet_dict[p].add(d + 1)
@@ -980,7 +1016,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       multi_cols = pd.MultiIndex.from_tuples(columns_tuples)
       istatistik_rows = []
 
-      for p in personeller:
+      for p in nobetci_personeller:
         bu_ay_gunler = {g: 0 for g in gunler_listesi}
         bu_ay_toplam_nobet = len(nobet_dict[p])
 
@@ -1011,18 +1047,24 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
       df_istatistik = pd.DataFrame(istatistik_rows, columns=multi_cols)
 
       puantaj_rows = []
-      for p in personeller:
-        p_row = {"Adı Soyadı": p, "Birim": personel_birimleri.get(p, "Mikro")}
+      for p in tum_girilen_personeller:
+        p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
+        is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
+
+        p_row = {"Adı Soyadı": p, "Birim": p_birim}
         for d in range(1, gun_sayisi + 1):
           dt = datetime.date(yil, ay, d)
           is_weekend = dt.weekday() in [5, 6]
 
-          if d in nobet_dict[p]:
-            p_row[str(d)] = "24"
-          elif (d - 1) in nobet_dict[p]:
-            p_row[str(d)] = "Nİ"
-          else:
+          if is_muaf:
             p_row[str(d)] = "-" if is_weekend else "8"
+          else:
+            if d in nobet_dict[p]:
+              p_row[str(d)] = "24"
+            elif (d - 1) in nobet_dict[p]:
+              p_row[str(d)] = "Nİ"
+            else:
+              p_row[str(d)] = "-" if is_weekend else "8"
         puantaj_rows.append(p_row)
 
       df_puantaj = pd.DataFrame(puantaj_rows)
@@ -1055,13 +1097,20 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         )
 
         excel_bytes = generate_3_tab_excel(
-            yil, ay, personeller, nobet_dict, gecmis_istatistik, gun_sayisi
+            yil,
+            ay,
+            nobetci_personeller,
+            tum_girilen_personeller,
+            nobet_dict,
+            gecmis_istatistik,
+            gun_sayisi,
+            birim_secimi,
         )
 
         st.download_button(
             label="📥 3 Sekmeli Tam Excel Dosyasını İndir (.xlsx)",
             data=excel_bytes,
-            file_name=f"Nobet_ve_Puantaj_Listesi_{yil}_{ay}.xlsx",
+            file_name=f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
