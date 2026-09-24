@@ -301,6 +301,7 @@ esnek_personel = st.sidebar.multiselect(
     ),
 )
 
+# --- 📊 GEÇMİŞ AY ROTASYONU / DEVİR YÜKLEME PANELİ ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 Geçmiş Ay Rotasyonu (Önceki Ay Dosyası)")
 uploaded_file = st.sidebar.file_uploader(
@@ -312,83 +313,67 @@ uploaded_file = st.sidebar.file_uploader(
 gecmis_istatistik = {}
 
 if uploaded_file is not None:
-  try:
-    xls = pd.ExcelFile(uploaded_file)
+    try:
+        xls = pd.ExcelFile(uploaded_file)
+        
+        # 1. Yeni 3 Sekmeli Sistem Dosyası Yüklenmişse
+        if "İstatistik & Mesai Yükü" in xls.sheet_names:
+            df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü")
+            
+            # Üst iki satır başlık olduğu için veri 2. satırdan başlar
+            # Sütun sırası: 0:İsim, 1:Pzt Devir, 2:Pzt BuAy, 3:Pzt Toplam, 4:Salı Devir...
+            gunler_sira = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+            
+            for r_idx in range(1, len(df_gecmis)):
+                row = df_gecmis.iloc[r_idx]
+                p_name = str(row.iloc[0]).strip().upper()
+                
+                if not p_name or p_name in ["NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
+                    continue
+                
+                p_dict = {}
+                # Her gün için "Toplam" sütun indeksleri: 3, 6, 9, 12, 15, 18, 21
+                for g_idx, g_name in enumerate(gunler_sira):
+                    toplam_col_idx = 3 + (g_idx * 3)
+                    try:
+                        val = int(row.iloc[toplam_col_idx])
+                    except (ValueError, TypeError, IndexError):
+                        val = 0
+                    p_dict[g_name] = val
+                
+                gecmis_istatistik[p_name] = p_dict
 
-    # 1. 3 Sekmeli Sistem Dosyası Yüklenmişse (İstatistik & Mesai Yükü Sekmesini Ara)
-    if "İstatistik & Mesai Yükü" in xls.sheet_names:
-      # Header=[0,1] ile MultiIndex (Gün -> Devir/Bu Ay/Toplam) yapısını okuyoruz
-      df_gecmis = pd.read_excel(
-          xls, sheet_name="İstatistik & Mesai Yükü", header=[0, 1]
-      )
+        # 2. Eski Tek Sayfalı Düz Excel Dosyası Yüklenmişse (Geriye Dönük Uyumluluk)
+        else:
+            df_gecmis = pd.read_excel(xls, sheet_name=0)
+            col_mapping = {tr_norm(col): col for col in df_gecmis.columns}
+            name_col = df_gecmis.columns[0]
 
-      for idx, row in df_gecmis.iterrows():
-        p_name = str(row[("AD SOYAD", "Unnamed: 0_level_1")]).strip().upper()
-        if not p_name or p_name in ["NAN", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
-          continue
+            for _, row in df_gecmis.iterrows():
+                p_name = str(row[name_col]).strip().upper()
+                if not p_name or p_name in ["NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
+                    continue
 
-        p_dict = {}
-        for g in [
-            "Pazartesi",
-            "Salı",
-            "Çarşamba",
-            "Perşembe",
-            "Cuma",
-            "Cumartesi",
-            "Pazar",
-        ]:
-          try:
-            # Önceki ayın "Toplam" değerini alıp yeni ayın "Devir" verisi yapıyoruz
-            val = int(row[(g, "Toplam")])
-          except (KeyError, ValueError, TypeError):
-            val = 0
-          p_dict[g] = val
+                p_dict = {}
+                for g in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]:
+                    g_norm = tr_norm(g)
+                    if g_norm in col_mapping:
+                        try:
+                            val = int(row[col_mapping[g_norm]])
+                        except (ValueError, TypeError):
+                            val = 0
+                    else:
+                        val = 0
+                    p_dict[g] = val
 
-        gecmis_istatistik[p_name] = p_dict
+                gecmis_istatistik[p_name] = p_dict
 
-    # 2. Eski Tek Sayfalı Düz Excel Dosyası Yüklenmişse (Geriye Dönük Uyumluluk)
-    else:
-      df_gecmis = pd.read_excel(xls, sheet_name=0)
-      col_mapping = {tr_norm(col): col for col in df_gecmis.columns}
-      name_col = df_gecmis.columns[0]
-
-      for _, row in df_gecmis.iterrows():
-        p_name = str(row[name_col]).strip().upper()
-        if not p_name or p_name in ["NAN", "AD SOYAD", "ADI SOYADI", "PERSONEL"]:
-          continue
-
-        p_dict = {}
-        for g in [
-            "Pazartesi",
-            "Salı",
-            "Çarşamba",
-            "Perşembe",
-            "Cuma",
-            "Cumartesi",
-            "Pazar",
-        ]:
-          g_norm = tr_norm(g)
-          if g_norm in col_mapping:
-            try:
-              val = int(row[col_mapping[g_norm]])
-            except (ValueError, TypeError):
-              val = 0
-          else:
-            val = 0
-          p_dict[g] = val
-
-        gecmis_istatistik[p_name] = p_dict
-
-    st.sidebar.success(
-        f"✅ {len(gecmis_istatistik)} personelin kumulatif devir verileri"
-        " başarıyla aktarıldı!"
-    )
-  except Exception as e:
-    st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+        st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri başarıyla aktarıldı!")
+    except Exception as e:
+        st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
 def get_prev(p_name, category):
-  return gecmis_istatistik.get(p_name, {}).get(category, 0)
-
+    return gecmis_istatistik.get(p_name, {}).get(category, 0)
 
 # --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
 st.markdown(
