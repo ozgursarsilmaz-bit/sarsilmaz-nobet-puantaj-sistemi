@@ -1,3 +1,4 @@
+import base64
 import calendar
 import datetime
 from io import BytesIO
@@ -146,6 +147,27 @@ st.markdown(
         background: linear-gradient(135deg, #146c43 0%, #0f5132 100%);
         transform: translateY(-1px);
         box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3);
+    }
+
+    /* Doğrudan indirme butonu stili */
+    .direct-download-btn {
+        display: inline-block;
+        width: 100%;
+        text-align: center;
+        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+        color: white !important;
+        text-decoration: none !important;
+        padding: 12px 20px;
+        font-size: 1.05rem;
+        font-weight: 700;
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(13, 110, 253, 0.25);
+        transition: all 0.3s ease;
+    }
+    .direct-download-btn:hover {
+        background: linear-gradient(135deg, #0a58ca 0%, #084298 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 14px rgba(13, 110, 253, 0.35);
     }
 
     [data-testid="stHorizontalBlock"] {
@@ -612,10 +634,10 @@ def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
     """
-    SADELEŞTİRİLMİŞ PRATİK PUANTAJ MANTIĞI:
-    1. Toplam Çalışma Saati ve Fazla Nöbet Saati bulunur.
-    2. Nöbet tutulan günlere göre 'Artırımlı (Gece)' saatler toplanır.
-    3. Artırımsız (Normal) Saat = Fazla Nöbet Saati - Artırımlı (Gece) Saat
+    TAM KONTROLLÜ VE TAM HESAPLAYICI METRİK FONKSİYONU:
+    BELGİN UYSAL -> 229 - 165 = 64 (36 Gece, 28 Normal)
+    KEVSER DUMLU  -> 224 - 165 = 59 (48 Gece, 11 Normal)
+    SUNA SARSILMAZ -> 224 - 165 = 59 (48 Gece, 11 Normal)
     """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
@@ -633,16 +655,16 @@ def calculate_personel_puantaj_metrikleri(
         elif val == "24A":
             toplam_calisma += 24
 
-        # SABİT GECE (ARTIRIMLI) SAATİ HESAPLAMA
         if val in ["24", "24A"]:
             is_risk = (val == "24A")
             
-            # Standart Hafta İçi Nöbeti Veya Tatil Öncesi Gün -> 8 Saat Gece
-            if (d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)) or (w in [0, 1, 2, 3] and d not in resmi_tatil_gunleri and d not in yarim_gun_tatil_gunleri):
-                g_saat = 8
-            # Yarım Gün Tatil (Arife), Hafta Sonu Veya Resmi Tatil Nöbeti -> 12 Saat Gece
-            else:
+            # GÜN BAZLI KESİN ARTIRIMLI (GECE) SAATİ ATAMALARI:
+            # 1. Yarım Gün Tatil (28 Ekim vb.) VEYA Tam Gün Resmi Tatil (29 Ekim vb.) VEYA Hafta Sonu (Cuma/Cmts/Pzr)
+            if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]):
                 g_saat = 12
+            # 2. Standart Hafta İçi (Pzt-Prş) veya Tatilden Bir Önceki Gün (27 Ekim vb.)
+            else:
+                g_saat = 8
 
             if is_risk:
                 risk_gece += g_saat
@@ -651,7 +673,7 @@ def calculate_personel_puantaj_metrikleri(
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
-    # ARTIRIMSIZ (NORMAL) SAAT = FAZLA NÖBET SAATİ - ARTIRIMLI SAATLER
+    # NORMAL (ARTIRIMSIZ) SAAT = FAZLA NÖBET SAATİ - TOPLAM GECE SAATİ
     norm_normal = max(0, fazla_nobet - norm_gece - risk_gece)
 
     return {
@@ -1228,7 +1250,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
             df_puantaj = pd.DataFrame(puantaj_rows)
 
-            # EXCEL BYTES 'LARI HESAPLANDIĞI ANDA DİREKT HAZIRLA
             excel_bytes = generate_3_tab_excel(
                 yil,
                 ay,
@@ -1241,6 +1262,11 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 resmi_tatil_gunleri,
                 yarim_gun_tatil_gunleri
             )
+
+            # TEK TIKLA DOĞRUDAN İNDİRME LİNKİ HAZIRLAMA (BASE64)
+            b64 = base64.b64encode(excel_bytes.getvalue()).decode()
+            file_name = f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx"
+            href_link = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{file_name}" class="direct-download-btn">📥 3 Sekmeli Resmi Excel Dosyasını İndir (.xlsx)</a>'
 
             tab1, tab2, tab3, tab4 = st.tabs([
                 "📅 Aylık Çizelge",
@@ -1263,13 +1289,8 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
             with tab4:
                 st.subheader("📥 Excel Dosyasını İndir")
-                # TEK AŞAMALI DİREKT İNDİRME BUTONU
-                st.download_button(
-                    label="💾 3 Sekmeli Tam Excel Dosyasını İndir (.xlsx)",
-                    data=excel_bytes,
-                    file_name=f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                st.write("Aşağıdaki butona tıkladığınızda dosyanız doğrudan bilgisayarınıza indirilecektir:")
+                st.markdown(href_link, unsafe_allow_html=True)
 
         else:
             st.error(
