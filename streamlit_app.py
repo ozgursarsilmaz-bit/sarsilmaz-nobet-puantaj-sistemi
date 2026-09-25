@@ -59,10 +59,22 @@ TUM_PERSONEL_VERISI = {
 st.markdown(
     """
 <style>
-    /* Üst menü boşluğunu sıfırlayıp başlığı yukarı çekme */
+    /* Üstte kalan Streamlit boşluğunu minimuma indir */
     .main .block-container {
-        padding-top: 1.2rem !important;
+        padding-top: 0.25rem !important;
         padding-bottom: 2rem !important;
+    }
+    /* Streamlit sürümlerinde kullanılan ana içerik kapsayıcıları */
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stAppViewContainer"] .main > div,
+    [data-testid="stAppViewContainer"] .main .block-container {
+        padding-top: 0.25rem !important;
+    }
+    [data-testid="stAppViewContainer"] {
+        padding-top: 0 !important;
+    }
+    section.main {
+        padding-top: 0 !important;
     }
     
     /* Sağ üstteki GitHub ikonunu gizleme */
