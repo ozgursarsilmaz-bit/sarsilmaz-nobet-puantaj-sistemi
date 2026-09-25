@@ -288,15 +288,15 @@ st.sidebar.subheader("🏖️ Resmi & İdari Tatil Günleri")
 resmi_tatil_gunleri = st.sidebar.multiselect(
     "Tam Gün Tatil / Resmi Günler:",
     options=gun_secenekleri,
-    default=[29] if gun_sayisi >= 29 and ay == 10 else [],
+    default=[],  # Açılışta tamamen boş gelecek
     help="Tam gün resmi/idari tatil günlerini seçiniz."
 )
 
 yarim_gun_tatil_gunleri = st.sidebar.multiselect(
     "Yarım Gün / Arife Günleri:",
     options=[g for g in gun_secenekleri if g not in resmi_tatil_gunleri],
-    default=[28] if gun_sayisi >= 28 and ay == 10 else [],
-    help="Arife veya yarım gün tatil günlerini seçiniz (Örn: 28 Ekim)."
+    default=[],  # Açılışta tamamen boş gelecek
+    help="Arife veya yarım gün tatil günlerini seçiniz."
 )
 
 # BİRİM SEÇİMİ
@@ -687,7 +687,7 @@ def calculate_personel_puantaj_metrikleri(
     }
 
 
-# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU (SAYI TİPİ DÜZELTİLMİŞ) ---
 def generate_3_tab_excel(
     yil,
     ay,
@@ -826,30 +826,30 @@ def generate_3_tab_excel(
 
         c_i = 2
         for g in gunler_listesi:
-            devir = gecmis_istatistik.get(p, {}).get(g, 0)
-            bu_ay = bu_ay_gunler[g]
+            devir = int(gecmis_istatistik.get(p, {}).get(g, 0))
+            bu_ay = int(bu_ay_gunler[g])
             toplam = devir + bu_ay
 
             for v in [devir, bu_ay, toplam]:
-                cell = ws2.cell(row=p_idx, column=c_i, value=v)
+                cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
                 cell.font = font_body
                 cell.alignment = align_center
                 cell.border = border_cell
                 c_i += 1
 
-        cell_saat = ws2.cell(row=p_idx, column=c_i, value=bu_ay_saat)
+        cell_saat = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_saat))
         cell_saat.font = font_bold
         cell_saat.alignment = align_center
         cell_saat.border = border_cell
 
-        cell_nobet = ws2.cell(row=p_idx, column=c_i + 1, value=bu_ay_toplam_nobet)
+        cell_nobet = ws2.cell(row=p_idx, column=c_i + 1, value=int(bu_ay_toplam_nobet))
         cell_nobet.font = font_bold
         cell_nobet.alignment = align_center
         cell_nobet.border = border_cell
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU
+    # 3. SEKME: PUANTAJ TABLOSU (SAYI TİPLERİ TAM İNT YAPILDI)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
@@ -870,7 +870,7 @@ def generate_3_tab_excel(
         if is_day_off(yil, ay, day, resmi_tatil_gunleri):
             off_days.add(day)
 
-        cell = ws3.cell(row=5, column=col_idx, value=day)
+        cell = ws3.cell(row=5, column=col_idx, value=int(day))
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
@@ -930,14 +930,14 @@ def generate_3_tab_excel(
                 if day in off_days:
                     cell.value = "T"
                 elif day in yarim_gun_tatil_gunleri:
-                    cell.value = 5
+                    cell.value = 5  # TAM SAYI OLARAK YAZILDI
                     cell.font = font_body
                 else:
-                    cell.value = 8
+                    cell.value = 8  # TAM SAYI OLARAK YAZILDI
                     cell.font = font_body
             else:
                 if day in p_shifts:
-                    cell.value = "24"
+                    cell.value = 24  # TAM SAYI OLARAK YAZILDI
                     cell.font = font_24
                 elif (day - 1) in p_shifts:
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri):
@@ -949,10 +949,10 @@ def generate_3_tab_excel(
                     if day in off_days:
                         cell.value = "T"
                     elif day in yarim_gun_tatil_gunleri:
-                        cell.value = 5
+                        cell.value = 5  # TAM SAYI OLARAK YAZILDI
                         cell.font = font_body
                     else:
-                        cell.value = 8
+                        cell.value = 8  # TAM SAYI OLARAK YAZILDI
                         cell.font = font_body
 
             p_row_dict[str(day)] = str(cell.value)
@@ -962,13 +962,13 @@ def generate_3_tab_excel(
         )
 
         metrik_values = [
-            m["Toplam Çalışma Saati"],
-            m["Aylık Çalışma Saati"],
-            m["Fazla Nöbet Saati"],
-            m["Normal_Gece"],
-            m["Normal_Normal"],
-            m["Riskli_Gece"],
-            m["Riskli_Normal"],
+            int(m["Toplam Çalışma Saati"]),
+            int(m["Aylık Çalışma Saati"]),
+            int(m["Fazla Nöbet Saati"]),
+            int(m["Normal_Gece"]),
+            int(m["Normal_Normal"]),
+            int(m["Riskli_Gece"]),
+            int(m["Riskli_Normal"]),
         ]
 
         for m_idx, val in enumerate(metrik_values):
