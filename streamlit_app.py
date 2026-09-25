@@ -259,7 +259,7 @@ with col_ay:
 _, gun_sayisi = calendar.monthrange(yil, ay)
 gun_secenekleri = list(range(1, gun_sayisi + 1))
 
-# --- RESMİ VE İDARİ TATİL SEÇİM PANELİ (MADDELER: 1) ---
+# --- RESMİ VE İDARİ TATİL SEÇİM PANELİ ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🏖️ Resmi & İdari Tatil Günleri")
 
@@ -267,14 +267,14 @@ resmi_tatil_gunleri = st.sidebar.multiselect(
     "Tam Gün Tatil / Resmi Günler:",
     options=gun_secenekleri,
     default=[],
-    help="1. Madde: Tam gün resmi/idari tatil günlerini seçiniz."
+    help="Tam gün resmi/idari tatil günlerini seçiniz."
 )
 
 yarim_gun_tatil_gunleri = st.sidebar.multiselect(
     "Yarım Gün / Arife Günleri:",
     options=[g for g in gun_secenekleri if g not in resmi_tatil_gunleri],
     default=[],
-    help="1. Madde: Arife veya yarım gün tatil günlerini seçiniz (Örn: 28 Ekim)."
+    help="Arife veya yarım gün tatil günlerini seçiniz (Örn: 28 Ekim)."
 )
 
 # BİRİM SEÇİMİ
@@ -594,17 +594,9 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-    """
-    MADDE 5 DİNAMİK SAAT HESAPLAMA MANTIĞI:
-    - Tam gün tatil nöbeti: Ertesi gün mesai varsa 16 saat, yoksa 24 saat
-    - Tatilden önceki gün nöbeti: 16 saat
-    - Yarım gün tatil (28 Ekim arife): 19 saat
-    - Yarım günden önceki gün (27 Ekim): 11 saat
-    - Normal gün nöbeti: Hafta içi 8s, Cuma/Paz 16s, Cmts 24s
-    """
     dt = datetime.date(yil, ay, d)
     
-    # 1. Yarım Gün Tatil Durumu
+    # 1. Yarım Gün Tatil Durumu (Arife)
     if d in yarim_gun_tatil_gunleri:
         return 19
     
@@ -614,7 +606,6 @@ def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun
 
     # 2. Tam Gün Tatil (Resmi Tatil veya Hafta Sonu)
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
-        # Ertesi gün mesai var mı?
         if d < gun_sayisi:
             next_is_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
             next_is_half = (d + 1) in yarim_gun_tatil_gunleri
@@ -622,7 +613,7 @@ def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun
                 return 16  # Ertesi gün mesai var
         return 24  # Ertesi gün de tatil
         
-    # 3. Tatilden Bir Önceki Gün (Normal çalışma günü ancak ertesi gün tatil)
+    # 3. Tatilden Bir Önceki Gün
     if d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
         return 16
 
@@ -855,7 +846,6 @@ def generate_3_tab_excel(
             if day in off_days:
                 cell.fill = fill_grey
 
-            # --- YENİ PUANTAJ HUCRE MANTIGI (MADDELER: 2, 3, 4, 5) ---
             if is_muaf:
                 if day in off_days:
                     cell.value = "T"
@@ -870,33 +860,31 @@ def generate_3_tab_excel(
                     cell.value = 24
                     cell.font = font_24
                 elif (day - 1) in p_shifts:
-                    # MADDE 2: Nöbet ertesi sadece hafta içi mesai günüyse 'Nİ', hafta sonu veya tatil ise 'T'
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri):
                         cell.value = "T"
                     else:
                         cell.value = "Nİ"
                         cell.font = font_ni
                 else:
-                    # MADDE 3: Nöbet tutmayanlar için hafta sonu veya resmi tatilde 'T'
                     if day in off_days:
                         cell.value = "T"
                     elif day in yarim_gun_tatil_gunleri:
-                        cell.value = 5  # Arife günü gündüz çalışan için 5 saat
+                        cell.value = 5
                         cell.font = font_body
                     else:
                         cell.value = 8
                         cell.font = font_body
 
-  ws3.column_dimensions["A"].width = 28
-  ws3.column_dimensions["B"].width = 12
-  for day in range(1, gun_sayisi + 1):
-      col_letter = get_column_letter(day + 2)
-      ws3.column_dimensions[col_letter].width = 4.5
+    ws3.column_dimensions["A"].width = 28
+    ws3.column_dimensions["B"].width = 12
+    for day in range(1, gun_sayisi + 1):
+        col_letter = get_column_letter(day + 2)
+        ws3.column_dimensions[col_letter].width = 4.5
 
-  output = BytesIO()
-  wb.save(output)
-  output.seek(0)
-  return output
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
 
 
 # --- HESAPLAMA VE OPTİMİZASYON ---
@@ -993,7 +981,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 model.Add(cumartesi_sayisi <= 1)
                 model.Add(pazar_sayisi <= 1)
 
-        # Dinamik Saatlerin Optimizasyona Yansıtılması (Madde 5 Kapsamında)
         gun_saatleri = []
         for d in range(1, gun_sayisi + 1):
             h = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
