@@ -266,14 +266,14 @@ st.sidebar.subheader("🏖️ Resmi & İdari Tatil Günleri")
 resmi_tatil_gunleri = st.sidebar.multiselect(
     "Tam Gün Tatil / Resmi Günler:",
     options=gun_secenekleri,
-    default=[],
+    default=[29] if gun_sayisi >= 29 and ay == 10 else [],
     help="Tam gün resmi/idari tatil günlerini seçiniz."
 )
 
 yarim_gun_tatil_gunleri = st.sidebar.multiselect(
     "Yarım Gün / Arife Günleri:",
     options=[g for g in gun_secenekleri if g not in resmi_tatil_gunleri],
-    default=[],
+    default=[28] if gun_sayisi >= 28 and ay == 10 else [],
     help="Arife veya yarım gün tatil günlerini seçiniz (Örn: 28 Ekim)."
 )
 
@@ -285,7 +285,6 @@ birim_secimi = st.sidebar.selectbox(
     index=0,
 )
 
-# Seçilen birime göre varsayılan personelleri filtrele
 varsayilan_liste = []
 for p_adi, p_info in TUM_PERSONEL_VERISI.items():
     if (
@@ -304,7 +303,6 @@ tum_girilen_personeller = [
     p.strip().upper() for p in personel_input.split("\n") if p.strip()
 ]
 
-# Aktif Nöbetçi Personeller ve Nöbet Muaf Personeller Ayrımı
 nobetci_personeller = [
     p
     for p in tum_girilen_personeller
@@ -368,13 +366,7 @@ if uploaded_file is not None:
         if "İstatistik & Mesai Yükü" in xls.sheet_names:
             df_gecmis = pd.read_excel(xls, sheet_name="İstatistik & Mesai Yükü")
             gunler_sira = [
-                "Pazartesi",
-                "Salı",
-                "Çarşamba",
-                "Perşembe",
-                "Cuma",
-                "Cumartesi",
-                "Pazar",
+                "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"
             ]
 
             for r_idx in range(1, len(df_gecmis)):
@@ -382,11 +374,7 @@ if uploaded_file is not None:
                 p_name = str(row.iloc[0]).strip().upper()
 
                 if not p_name or p_name in [
-                    "NAN",
-                    "NONE",
-                    "AD SOYAD",
-                    "ADI SOYADI",
-                    "PERSONEL",
+                    "NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"
                 ]:
                     continue
 
@@ -408,23 +396,13 @@ if uploaded_file is not None:
             for _, row in df_gecmis.iterrows():
                 p_name = str(row[name_col]).strip().upper()
                 if not p_name or p_name in [
-                    "NAN",
-                    "NONE",
-                    "AD SOYAD",
-                    "ADI SOYADI",
-                    "PERSONEL",
+                    "NAN", "NONE", "AD SOYAD", "ADI SOYADI", "PERSONEL"
                 ]:
                     continue
 
                 p_dict = {}
                 for g in [
-                    "Pazartesi",
-                    "Salı",
-                    "Çarşamba",
-                    "Perşembe",
-                    "Cuma",
-                    "Cumartesi",
-                    "Pazar",
+                    "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"
                 ]:
                     g_norm = tr_norm(g)
                     if g_norm in col_mapping:
@@ -635,12 +613,9 @@ def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
     """
-    Puantaj satırına göre yeni istenen tüm özel hesaplamaları yapar:
-    1. Toplam Çalışma Saati (AJ4)
-    2. Aylık Çalışma Saati (AK4)
-    3. Fazla Nöbet Saati (AL4)
-    4. Normal Nöbet Saati (Artırımlı - Artırımsız)
-    5. Riskli Nöbet Saati (Artırımlı - Artırımsız)
+    TÜM ÖRNEKLERLE %100 UYUMLU PUANTAJ METRİK HESAPLAMA MANTIĞI:
+    - KEVSER DUMLU (Arife / 28. gün nöbeti -> 19s -> 12 Gece, 7 Normal)
+    - SUNA SARSILMAZ (Resmi Tatil / 29. gün nöbeti -> 16s -> 12 Gece, 4 Normal)
     """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
@@ -655,35 +630,47 @@ def calculate_personel_puantaj_metrikleri(
         dt = datetime.date(yil, ay, d)
         w = dt.weekday()
 
-        # Sayısal toplama ekleme
+        # Sayısal Toplama Ekleme
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
         elif val == "24A":
             toplam_calisma += 24
 
-        # --- NORMAL NÖBET (24) GECE/NORMAL BÖLÜNMESİ ---
-        if val == "24":
-            if w in [0, 1, 2, 3]:  # Pzt - Prş
-                norm_gece += 8
-                norm_normal += 0
-            elif w in [4, 6]:      # Cuma / Pazar
-                norm_gece += 12
-                norm_normal += 4
-            elif w == 5:           # Cumartesi
-                norm_gece += 12
-                norm_normal += 12
+        # --- NÖBET GECE / NORMAL KIRILIMLARI ---
+        if val in ["24", "24A"]:
+            is_risk = (val == "24A")
+            
+            # 1. ÖZEL DURUM: Yarım Gün / Arife Nöbeti (28. Gün - 19 Saat)
+            if d in yarim_gun_tatil_gunleri:
+                g_saat, n_saat = 12, 7
+            
+            # 2. ÖZEL DURUM: Tam Gün Tatil ve Ertesi Gün Mesai (29. Gün - 16 Saat)
+            elif is_day_off(yil, ay, d, resmi_tatil_gunleri):
+                if d < gun_sayisi and not is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) and (d + 1) not in yarim_gun_tatil_gunleri:
+                    g_saat, n_saat = 12, 4
+                else:
+                    g_saat, n_saat = 12, 12
 
-        # --- RİSKLİ NÖBET (24A) GECE/NORMAL BÖLÜNMESİ ---
-        elif val == "24A":
-            if w in [0, 1, 2, 3]:  # Pzt - Prş
-                risk_gece += 8
-                risk_normal += 0
-            elif w in [4, 6]:      # Cuma / Pazar
-                risk_gece += 12
-                risk_normal += 4
-            elif w == 5:           # Cumartesi
-                risk_gece += 12
-                risk_normal += 12
+            # 3. ÖZEL DURUM: Tatil Öncesi Gün (16 Saat)
+            elif d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
+                g_saat, n_saat = 12, 4
+
+            # 4. STANDART GÜNLER
+            else:
+                if w in [0, 1, 2, 3]:   # Pzt - Prş (Net 8s)
+                    g_saat, n_saat = 8, 0
+                elif w in [4, 6]:       # Cuma / Pazar (Net 16s)
+                    g_saat, n_saat = 12, 4
+                else:                   # Cumartesi (Net 24s)
+                    g_saat, n_saat = 12, 12
+
+            # Kırılımları İlgili Değişkene Ekle
+            if is_risk:
+                risk_gece += g_saat
+                risk_normal += n_saat
+            else:
+                norm_gece += g_saat
+                norm_normal += n_saat
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
@@ -860,13 +847,9 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU (Görseldeki İstenen Yeni Sütunlar İle Birlikte)
+    # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
-
-    # Üst Başlık Grubu
-    ws3.cell(row=4, column=1, value="").border = border_cell
-    ws3.cell(row=4, column=2, value="").border = border_cell
 
     ws3.row_dimensions[5].height = 25
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
@@ -891,7 +874,6 @@ def generate_3_tab_excel(
         cell.border = border_cell
         cell.fill = fill_grey if day in off_days else fill_header
 
-    # Ek Özet Sütun Başlıkları
     ek_basliklar = [
         ("Toplam çalışma saati", 5),
         ("Aylık Çalışma Saati", 5),
@@ -973,7 +955,6 @@ def generate_3_tab_excel(
 
             p_row_dict[str(day)] = str(cell.value)
 
-        # HESAPLANAN METRİKLERİ EXCEL'E YAZ
         m = calculate_personel_puantaj_metrikleri(
             p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
         )
@@ -1252,7 +1233,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                             else:
                                 p_row[str(d)] = "8"
 
-                # Puantaj Metriklerini Önizleme Tablosuna da Ekle
                 m = calculate_personel_puantaj_metrikleri(
                     p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
                 )
