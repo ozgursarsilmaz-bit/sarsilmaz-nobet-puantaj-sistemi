@@ -596,35 +596,106 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
     dt = datetime.date(yil, ay, d)
     
-    # 1. Yarım Gün Tatil Durumu (Arife)
     if d in yarim_gun_tatil_gunleri:
         return 19
-    
-    # Yarım Gün Tatilden Önceki Gün
     if (d + 1) in yarim_gun_tatil_gunleri:
         return 11
 
-    # 2. Tam Gün Tatil (Resmi Tatil veya Hafta Sonu)
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
         if d < gun_sayisi:
             next_is_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
             next_is_half = (d + 1) in yarim_gun_tatil_gunleri
             if not next_is_off and not next_is_half:
-                return 16  # Ertesi gün mesai var
-        return 24  # Ertesi gün de tatil
+                return 16
+        return 24
         
-    # 3. Tatilden Bir Önceki Gün
     if d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
         return 16
 
-    # 4. Standart Gün Nöbet Saatleri
     w = dt.weekday()
     if w in [0, 1, 2, 3]:
         return 8
     elif w in [4, 6]:
         return 16
-    else: # Cumartesi
+    else:
         return 24
+
+def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+    """O ay için hedeflenen standart mesai saatini hesaplar (AK4)."""
+    toplam_saat = 0
+    for d in range(1, gun_sayisi + 1):
+        if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
+            if d in yarim_gun_tatil_gunleri:
+                toplam_saat += 5
+            else:
+                toplam_saat += 8
+    return toplam_saat
+
+def calculate_personel_puantaj_metrikleri(
+    p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+):
+    """
+    Puantaj satırına göre yeni istenen tüm özel hesaplamaları yapar:
+    1. Toplam Çalışma Saati (AJ4)
+    2. Aylık Çalışma Saati (AK4)
+    3. Fazla Nöbet Saati (AL4)
+    4. Normal Nöbet Saati (Artırımlı - Artırımsız)
+    5. Riskli Nöbet Saati (Artırımlı - Artırımsız)
+    """
+    aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+    
+    toplam_calisma = 0
+    norm_gece = 0
+    norm_normal = 0
+    risk_gece = 0
+    risk_normal = 0
+
+    for d in range(1, gun_sayisi + 1):
+        val = str(p_row_dict.get(str(d), "")).strip()
+        dt = datetime.date(yil, ay, d)
+        w = dt.weekday()
+
+        # Sayısal toplama ekleme
+        if val in ["8", "5", "16", "19", "11", "24"]:
+            toplam_calisma += int(val)
+        elif val == "24A":
+            toplam_calisma += 24
+
+        # --- NORMAL NÖBET (24) GECE/NORMAL BÖLÜNMESİ ---
+        if val == "24":
+            if w in [0, 1, 2, 3]:  # Pzt - Prş
+                norm_gece += 8
+                norm_normal += 0
+            elif w in [4, 6]:      # Cuma / Pazar
+                norm_gece += 12
+                norm_normal += 4
+            elif w == 5:           # Cumartesi
+                norm_gece += 12
+                norm_normal += 12
+
+        # --- RİSKLİ NÖBET (24A) GECE/NORMAL BÖLÜNMESİ ---
+        elif val == "24A":
+            if w in [0, 1, 2, 3]:  # Pzt - Prş
+                risk_gece += 8
+                risk_normal += 0
+            elif w in [4, 6]:      # Cuma / Pazar
+                risk_gece += 12
+                risk_normal += 4
+            elif w == 5:           # Cumartesi
+                risk_gece += 12
+                risk_normal += 12
+
+    fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+
+    return {
+        "Toplam Çalışma Saati": toplam_calisma,
+        "Aylık Çalışma Saati": aylik_hedef_saat,
+        "Fazla Nöbet Saati": fazla_nobet,
+        "Normal_Gece": norm_gece,
+        "Normal_Normal": norm_normal,
+        "Riskli_Gece": risk_gece,
+        "Riskli_Normal": risk_normal,
+    }
 
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
@@ -789,11 +860,15 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU
+    # 3. SEKME: PUANTAJ TABLOSU (Görseldeki İstenen Yeni Sütunlar İle Birlikte)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
-    ws3.row_dimensions[5].height = 20
+    # Üst Başlık Grubu
+    ws3.cell(row=4, column=1, value="").border = border_cell
+    ws3.cell(row=4, column=2, value="").border = border_cell
+
+    ws3.row_dimensions[5].height = 25
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
     ws3.cell(row=5, column=1).font = font_header
     ws3.cell(row=5, column=1).alignment = align_left
@@ -816,6 +891,26 @@ def generate_3_tab_excel(
         cell.border = border_cell
         cell.fill = fill_grey if day in off_days else fill_header
 
+    # Ek Özet Sütun Başlıkları
+    ek_basliklar = [
+        ("Toplam çalışma saati", 5),
+        ("Aylık Çalışma Saati", 5),
+        ("Fazla nöbet saati", 5),
+        ("Normal Nöbet - Artırımlı (Gece)", 4),
+        ("Normal Nöbet - Artırımsız (Normal)", 5),
+        ("Riskli Nöbet - Artırımlı (Gece)", 4),
+        ("Riskli Nöbet - Artırımsız (Normal)", 5),
+    ]
+
+    start_col = gun_sayisi + 3
+    for idx, (b_adi, r_h) in enumerate(ek_basliklar):
+        c_i = start_col + idx
+        cell = ws3.cell(row=5, column=c_i, value=b_adi)
+        cell.font = font_header
+        cell.fill = fill_green_bg
+        cell.alignment = align_center
+        cell.border = border_cell
+
     for idx, p in enumerate(tum_girilen_personeller):
         r = 6 + idx
         ws3.row_dimensions[r].height = 18
@@ -836,6 +931,7 @@ def generate_3_tab_excel(
         c_unit.border = border_cell
 
         p_shifts = nobet_dict.get(p, set())
+        p_row_dict = {}
 
         for day in range(1, gun_sayisi + 1):
             col_idx = day + 2
@@ -857,7 +953,7 @@ def generate_3_tab_excel(
                     cell.font = font_body
             else:
                 if day in p_shifts:
-                    cell.value = 24
+                    cell.value = "24"
                     cell.font = font_24
                 elif (day - 1) in p_shifts:
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri):
@@ -875,11 +971,39 @@ def generate_3_tab_excel(
                         cell.value = 8
                         cell.font = font_body
 
+            p_row_dict[str(day)] = str(cell.value)
+
+        # HESAPLANAN METRİKLERİ EXCEL'E YAZ
+        m = calculate_personel_puantaj_metrikleri(
+            p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+        )
+
+        metrik_values = [
+            m["Toplam Çalışma Saati"],
+            m["Aylık Çalışma Saati"],
+            m["Fazla Nöbet Saati"],
+            m["Normal_Gece"],
+            m["Normal_Normal"],
+            m["Riskli_Gece"],
+            m["Riskli_Normal"],
+        ]
+
+        for m_idx, val in enumerate(metrik_values):
+            col_idx = start_col + m_idx
+            cell = ws3.cell(row=r, column=col_idx, value=val)
+            cell.font = font_bold if m_idx < 3 else font_body
+            cell.alignment = align_center
+            cell.border = border_cell
+
     ws3.column_dimensions["A"].width = 28
     ws3.column_dimensions["B"].width = 12
     for day in range(1, gun_sayisi + 1):
         col_letter = get_column_letter(day + 2)
         ws3.column_dimensions[col_letter].width = 4.5
+
+    for m_idx in range(len(ek_basliklar)):
+        col_letter = get_column_letter(start_col + m_idx)
+        ws3.column_dimensions[col_letter].width = 14
 
     output = BytesIO()
     wb.save(output)
@@ -931,7 +1055,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             for d in sabit_nobetler[p]:
                 model.Add(x[(p, d)] == 1)
 
-        # DİNAMİK MİNİMUM DİNLENME SÜRESİ
         for p in nobetci_personeller:
             p_dinlenme = (
                 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
@@ -941,15 +1064,13 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1)) <= 1
                 )
 
-        # DİNAMİK PERŞEMBE - PAZAR YASAĞI
         if persembe_pazar_yasagi:
             for d in range(gun_sayisi - 3):
-                if datetime.date(yil, ay, d + 1).weekday() == 3:  # Perşembe
+                if datetime.date(yil, ay, d + 1).weekday() == 3:
                     for p in nobetci_personeller:
                         if p not in esnek_personel:
                             model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
 
-        # KİŞİLER ARASI ÖZEL MESAFE KURALLARI
         for rule in kisi_kisitlari:
             p1 = rule["ana"]
             aralik = rule["aralik"]
@@ -1130,6 +1251,19 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                                 p_row[str(d)] = "5"
                             else:
                                 p_row[str(d)] = "8"
+
+                # Puantaj Metriklerini Önizleme Tablosuna da Ekle
+                m = calculate_personel_puantaj_metrikleri(
+                    p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+                )
+                p_row["Toplam çalışma saati"] = m["Toplam Çalışma Saati"]
+                p_row["Aylık Çalışma Saati"] = m["Aylık Çalışma Saati"]
+                p_row["Fazla nöbet saati"] = m["Fazla Nöbet Saati"]
+                p_row["Normal Nöbet - Artırımlı (Gece)"] = m["Normal_Gece"]
+                p_row["Normal Nöbet - Artırımsız (Normal)"] = m["Normal_Normal"]
+                p_row["Riskli Nöbet - Artırımlı (Gece)"] = m["Riskli_Gece"]
+                p_row["Riskli Nöbet - Artırımsız (Normal)"] = m["Riskli_Normal"]
+
                 puantaj_rows.append(p_row)
 
             df_puantaj = pd.DataFrame(puantaj_rows)
@@ -1150,7 +1284,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 st.dataframe(df_istatistik, use_container_width=True)
 
             with tab3:
-                st.subheader("📋 Resmi Puantaj Tablosu Önizleme (8 / 24 / Nİ / T / 5)")
+                st.subheader("📋 Resmi Puantaj Tablosu Önizleme ve Hesaplama Özeti")
                 st.dataframe(df_puantaj, use_container_width=True)
 
             with tab4:
