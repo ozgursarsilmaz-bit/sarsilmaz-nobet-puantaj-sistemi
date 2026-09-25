@@ -599,7 +599,6 @@ def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun
         return 24
 
 def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-    """O ay için hedeflenen standart mesai saatini hesaplar (AK4)."""
     toplam_saat = 0
     for d in range(1, gun_sayisi + 1):
         if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
@@ -613,66 +612,47 @@ def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
     """
-    TÜM ÖRNEKLERLE %100 UYUMLU PUANTAJ METRİK HESAPLAMA MANTIĞI:
-    - KEVSER DUMLU (Arife / 28. gün nöbeti -> 19s -> 12 Gece, 7 Normal)
-    - SUNA SARSILMAZ (Resmi Tatil / 29. gün nöbeti -> 16s -> 12 Gece, 4 Normal)
+    SADELEŞTİRİLMİŞ PRATİK PUANTAJ MANTIĞI:
+    1. Toplam Çalışma Saati ve Fazla Nöbet Saati bulunur.
+    2. Nöbet tutulan günlere göre 'Artırımlı (Gece)' saatler toplanır.
+    3. Artırımsız (Normal) Saat = Fazla Nöbet Saati - Artırımlı (Gece) Saat
     """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
     norm_gece = 0
-    norm_normal = 0
     risk_gece = 0
-    risk_normal = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
         dt = datetime.date(yil, ay, d)
         w = dt.weekday()
 
-        # Sayısal Toplama Ekleme
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
         elif val == "24A":
             toplam_calisma += 24
 
-        # --- NÖBET GECE / NORMAL KIRILIMLARI ---
+        # SABİT GECE (ARTIRIMLI) SAATİ HESAPLAMA
         if val in ["24", "24A"]:
             is_risk = (val == "24A")
             
-            # 1. ÖZEL DURUM: Yarım Gün / Arife Nöbeti (28. Gün - 19 Saat)
-            if d in yarim_gun_tatil_gunleri:
-                g_saat, n_saat = 12, 7
-            
-            # 2. ÖZEL DURUM: Tam Gün Tatil ve Ertesi Gün Mesai (29. Gün - 16 Saat)
-            elif is_day_off(yil, ay, d, resmi_tatil_gunleri):
-                if d < gun_sayisi and not is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) and (d + 1) not in yarim_gun_tatil_gunleri:
-                    g_saat, n_saat = 12, 4
-                else:
-                    g_saat, n_saat = 12, 12
-
-            # 3. ÖZEL DURUM: Tatil Öncesi Gün (16 Saat)
-            elif d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
-                g_saat, n_saat = 12, 4
-
-            # 4. STANDART GÜNLER
+            # Standart Hafta İçi Nöbeti Veya Tatil Öncesi Gün -> 8 Saat Gece
+            if (d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)) or (w in [0, 1, 2, 3] and d not in resmi_tatil_gunleri and d not in yarim_gun_tatil_gunleri):
+                g_saat = 8
+            # Yarım Gün Tatil (Arife), Hafta Sonu Veya Resmi Tatil Nöbeti -> 12 Saat Gece
             else:
-                if w in [0, 1, 2, 3]:   # Pzt - Prş (Net 8s)
-                    g_saat, n_saat = 8, 0
-                elif w in [4, 6]:       # Cuma / Pazar (Net 16s)
-                    g_saat, n_saat = 12, 4
-                else:                   # Cumartesi (Net 24s)
-                    g_saat, n_saat = 12, 12
+                g_saat = 12
 
-            # Kırılımları İlgili Değişkene Ekle
             if is_risk:
                 risk_gece += g_saat
-                risk_normal += n_saat
             else:
                 norm_gece += g_saat
-                norm_normal += n_saat
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+
+    # ARTIRIMSIZ (NORMAL) SAAT = FAZLA NÖBET SAATİ - ARTIRIMLI SAATLER
+    norm_normal = max(0, fazla_nobet - norm_gece - risk_gece)
 
     return {
         "Toplam Çalışma Saati": toplam_calisma,
@@ -681,7 +661,7 @@ def calculate_personel_puantaj_metrikleri(
         "Normal_Gece": norm_gece,
         "Normal_Normal": norm_normal,
         "Riskli_Gece": risk_gece,
-        "Riskli_Normal": risk_normal,
+        "Riskli_Normal": 0,
     }
 
 
@@ -1248,6 +1228,20 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
             df_puantaj = pd.DataFrame(puantaj_rows)
 
+            # EXCEL BYTES 'LARI HESAPLANDIĞI ANDA DİREKT HAZIRLA
+            excel_bytes = generate_3_tab_excel(
+                yil,
+                ay,
+                nobetci_personeller,
+                tum_girilen_personeller,
+                nobet_dict,
+                gecmis_istatistik,
+                gun_sayisi,
+                birim_secimi,
+                resmi_tatil_gunleri,
+                yarim_gun_tatil_gunleri
+            )
+
             tab1, tab2, tab3, tab4 = st.tabs([
                 "📅 Aylık Çizelge",
                 "📊 İstatistik & Mesai",
@@ -1268,28 +1262,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 st.dataframe(df_puantaj, use_container_width=True)
 
             with tab4:
-                st.subheader("📥 3 Sekmeli Resmi Excel İndirme Paneli")
-                st.write(
-                    "Aşağıdaki butona tıklayarak **Aylık Çizelge**, **Mesai"
-                    " İstatistikleri** ve **Resmi Puantaj Tablosu**'nu tek bir Excel"
-                    " dosyasında indirebilirsiniz:"
-                )
-
-                excel_bytes = generate_3_tab_excel(
-                    yil,
-                    ay,
-                    nobetci_personeller,
-                    tum_girilen_personeller,
-                    nobet_dict,
-                    gecmis_istatistik,
-                    gun_sayisi,
-                    birim_secimi,
-                    resmi_tatil_gunleri,
-                    yarim_gun_tatil_gunleri
-                )
-
+                st.subheader("📥 Excel Dosyasını İndir")
+                # TEK AŞAMALI DİREKT İNDİRME BUTONU
                 st.download_button(
-                    label="📥 3 Sekmeli Tam Excel Dosyasını İndir (.xlsx)",
+                    label="💾 3 Sekmeli Tam Excel Dosyasını İndir (.xlsx)",
                     data=excel_bytes,
                     file_name=f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
