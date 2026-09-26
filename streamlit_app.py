@@ -1,3 +1,4 @@
+import base64
 import calendar
 import datetime
 from io import BytesIO
@@ -148,6 +149,27 @@ st.markdown(
         box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3);
     }
 
+    /* Doğrudan indirme butonu stili */
+    .direct-download-btn {
+        display: inline-block;
+        width: 100%;
+        text-align: center;
+        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+        color: white !important;
+        text-decoration: none !important;
+        padding: 12px 20px;
+        font-size: 1.05rem;
+        font-weight: 700;
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(13, 110, 253, 0.25);
+        transition: all 0.3s ease;
+    }
+    .direct-download-btn:hover {
+        background: linear-gradient(135deg, #0a58ca 0%, #084298 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 14px rgba(13, 110, 253, 0.35);
+    }
+
     [data-testid="stHorizontalBlock"] {
         align-items: center !important;
         gap: 0.5rem !important;
@@ -274,7 +296,7 @@ yarim_gun_tatil_gunleri = st.sidebar.multiselect(
     "Yarım Gün / Arife Günleri:",
     options=[g for g in gun_secenekleri if g not in resmi_tatil_gunleri],
     default=[],
-    help="Arife veya yarım gün tatil günlerini seçiniz (Örn: 28 Ekim)."
+    help="Arife veya yarım gün tatil günlerini seçiniz."
 )
 
 # BİRİM SEÇİMİ
@@ -285,7 +307,6 @@ birim_secimi = st.sidebar.selectbox(
     index=3,
 )
 
-# Seçilen birime göre varsayılan personelleri filtrele
 varsayilan_liste = []
 for p_adi, p_info in TUM_PERSONEL_VERISI.items():
     if (
@@ -304,7 +325,6 @@ tum_girilen_personeller = [
     p.strip().upper() for p in personel_input.split("\n") if p.strip()
 ]
 
-# Aktif Nöbetçi Personeller ve Nöbet Muaf Personeller Ayrımı
 nobetci_personeller = [
     p
     for p in tum_girilen_personeller
@@ -390,14 +410,16 @@ if uploaded_file is not None:
 
                 gecmis_istatistik[p_name] = p_dict
 
-                # ACİL NÖBET DEVİR SAATİNİ OKUMA (En sağdaki sütun grubu)
+                # ACİL NÖBET DEVİR SAATİNİ OKUMA
                 try:
-                    acil_devir_val = int(row.iloc[25])  # Acil Toplam Sütunu / Devir Sütunu
+                    acil_devir_val = int(row.iloc[25])
                 except (ValueError, TypeError, IndexError):
                     acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
 
-        st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
+        st.sidebar.success(
+            f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!"
+        )
     except Exception as e:
         st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
@@ -406,7 +428,6 @@ def get_prev(p_name, category):
 
 def get_prev_acil(p_name):
     return gecmis_acil_istatistik.get(p_name, 0)
-
 
 # --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
 st.markdown(
@@ -564,6 +585,73 @@ def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun
     else:
         return 24
 
+def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+    toplam_saat = 0
+    for d in range(1, gun_sayisi + 1):
+        if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
+            if d in yarim_gun_tatil_gunleri:
+                toplam_saat += 5
+            else:
+                toplam_saat += 8
+    return toplam_saat
+
+def calculate_personel_puantaj_metrikleri(
+    p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+):
+    """
+    24 NOLU NORMAL NÖBETLERİ NORMAL SÜTUNA,
+    24A NOLU ACİL NÖBETLERİ RİSKLİ SÜTUNA HESAPLAYAN METRİK FONKSİYONU
+    """
+    aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+    
+    toplam_calisma = 0
+    norm_gece = 0
+    risk_gece = 0
+
+    for d in range(1, gun_sayisi + 1):
+        val = str(p_row_dict.get(str(d), "")).strip()
+        dt = datetime.date(yil, ay, d)
+        w = dt.weekday()
+
+        if val in ["8", "5", "16", "19", "11", "24"]:
+            toplam_calisma += int(val)
+        elif val == "24A":
+            toplam_calisma += 24
+
+        if val in ["24", "24A"]:
+            is_risk = (val == "24A")
+            
+            # GÜN BAZLI ARTIRIMLI (GECE) SAATİ ATAMALARI
+            if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]):
+                g_saat = 12
+            else:
+                g_saat = 8
+
+            if is_risk:
+                risk_gece += g_saat
+            else:
+                norm_gece += g_saat
+
+    fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+
+    # TOPLAM FAZLA NÖBET SAATİNİN GECE DÜŞÜMÜNDEN KALAN KISMI
+    toplam_gece = norm_gece + risk_gece
+    kalan_normal_saat = max(0, fazla_nobet - toplam_gece)
+
+    # EĞER RİSKLİ NÖBET VARSA NORMAL KISMA ÖNCELİK VER, KALANI NORMAL NÖBETE YAZ
+    norm_normal = kalan_normal_saat if risk_gece == 0 else max(0, kalan_normal_saat)
+    risk_normal = 0
+
+    return {
+        "Toplam Çalışma Saati": toplam_calisma,
+        "Aylık Çalışma Saati": aylik_hedef_saat,
+        "Fazla Nöbet Saati": fazla_nobet,
+        "Normal_Gece": norm_gece,
+        "Normal_Normal": norm_normal,
+        "Riskli_Gece": risk_gece,
+        "Riskli_Normal": risk_normal,
+    }
+
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
@@ -650,7 +738,7 @@ def generate_3_tab_excel(
     ws1.column_dimensions["D"].width = 25
     ws1.column_dimensions["E"].width = 25
 
-    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ (ACİL NÖBET SÜTUNU DAHİL)
+    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ
     ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
     ws2.views.sheetView[0].showGridLines = True
 
@@ -698,7 +786,7 @@ def generate_3_tab_excel(
     c_tnb.alignment = align_center
     c_tnb.border = border_cell
 
-    # YENİ: ACİL NÖBET SÜTUN GRUBU
+    # ACİL NÖBET SÜTUN GRUBU
     col_counter += 1
     ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
     top_acil = ws2.cell(row=1, column=col_counter, value="ACİL NÖBET (SAAT)")
@@ -733,38 +821,37 @@ def generate_3_tab_excel(
 
         c_i = 2
         for g in gunler_listesi:
-            devir = gecmis_istatistik.get(p, {}).get(g, 0)
-            bu_ay = bu_ay_gunler[g]
+            devir = int(gecmis_istatistik.get(p, {}).get(g, 0))
+            bu_ay = int(bu_ay_gunler[g])
             toplam = devir + bu_ay
 
             for v in [devir, bu_ay, toplam]:
-                cell = ws2.cell(row=p_idx, column=c_i, value=v)
+                cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
                 cell.font = font_body
                 cell.alignment = align_center
                 cell.border = border_cell
                 c_i += 1
 
-        cell_saat = ws2.cell(row=p_idx, column=c_i, value=bu_ay_saat)
+        cell_saat = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_saat))
         cell_saat.font = font_bold
         cell_saat.alignment = align_center
         cell_saat.border = border_cell
 
-        cell_nobet = ws2.cell(row=p_idx, column=c_i + 1, value=bu_ay_toplam_nobet)
+        cell_nobet = ws2.cell(row=p_idx, column=c_i + 1, value=int(bu_ay_toplam_nobet))
         cell_nobet.font = font_bold
         cell_nobet.alignment = align_center
         cell_nobet.border = border_cell
 
-        # ACİL NÖBET HESABI YAZMA
         bu_ay_acil_saat = sum(
             calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
             for d in acil_nobet_dict.get(p, set())
         )
-        acil_devir = gecmis_acil_istatistik.get(p, 0)
+        acil_devir = int(gecmis_acil_istatistik.get(p, 0))
         acil_toplam = acil_devir + bu_ay_acil_saat
 
         c_i += 2
         for v in [acil_devir, bu_ay_acil_saat, acil_toplam]:
-            cell = ws2.cell(row=p_idx, column=c_i, value=v)
+            cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
             cell.font = font_bold if c_i % 3 == 0 else font_body
             cell.alignment = align_center
             cell.border = border_cell
@@ -772,11 +859,11 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU
+    # 3. SEKME: PUANTAJ TABLOSU (24 / 24A METRİKLERİ İLE)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
-    ws3.row_dimensions[5].height = 20
+    ws3.row_dimensions[5].height = 25
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
     ws3.cell(row=5, column=1).font = font_header
     ws3.cell(row=5, column=1).alignment = align_left
@@ -793,11 +880,30 @@ def generate_3_tab_excel(
         if is_day_off(yil, ay, day, resmi_tatil_gunleri):
             off_days.add(day)
 
-        cell = ws3.cell(row=5, column=col_idx, value=day)
+        cell = ws3.cell(row=5, column=col_idx, value=int(day))
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
         cell.fill = fill_grey if day in off_days else fill_header
+
+    ek_basliklar = [
+        ("Toplam çalışma saati", 5),
+        ("Aylık Çalışma Saati", 5),
+        ("Fazla nöbet saati", 5),
+        ("Normal Nöbet - Artırımlı (Gece)", 4),
+        ("Normal Nöbet - Artırımsız (Normal)", 5),
+        ("Riskli Nöbet - Artırımlı (Gece)", 4),
+        ("Riskli Nöbet - Artırımsız (Normal)", 5),
+    ]
+
+    start_col = gun_sayisi + 3
+    for idx, (b_adi, r_h) in enumerate(ek_basliklar):
+        c_i = start_col + idx
+        cell = ws3.cell(row=5, column=c_i, value=b_adi)
+        cell.font = font_header
+        cell.fill = fill_green_bg
+        cell.alignment = align_center
+        cell.border = border_cell
 
     for idx, p in enumerate(tum_girilen_personeller):
         r = 6 + idx
@@ -820,6 +926,7 @@ def generate_3_tab_excel(
 
         p_shifts = nobet_dict.get(p, set())
         p_acils = acil_nobet_dict.get(p, set())
+        p_row_dict = {}
 
         for day in range(1, gun_sayisi + 1):
             col_idx = day + 2
@@ -841,7 +948,7 @@ def generate_3_tab_excel(
                     cell.font = font_body
             else:
                 if day in p_shifts:
-                    cell.value = "24A" if day in p_acils else "24"
+                    cell.value = "24A" if day in p_acils else 24
                     cell.font = font_24
                 elif (day - 1) in p_shifts:
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri):
@@ -859,11 +966,38 @@ def generate_3_tab_excel(
                         cell.value = 8
                         cell.font = font_body
 
+            p_row_dict[str(day)] = str(cell.value)
+
+        m = calculate_personel_puantaj_metrikleri(
+            p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+        )
+
+        metrik_values = [
+            int(m["Toplam Çalışma Saati"]),
+            int(m["Aylık Çalışma Saati"]),
+            int(m["Fazla Nöbet Saati"]),
+            int(m["Normal_Gece"]),
+            int(m["Normal_Normal"]),
+            int(m["Riskli_Gece"]),
+            int(m["Riskli_Normal"]),
+        ]
+
+        for m_idx, val in enumerate(metrik_values):
+            col_idx = start_col + m_idx
+            cell = ws3.cell(row=r, column=col_idx, value=val)
+            cell.font = font_bold if m_idx < 3 else font_body
+            cell.alignment = align_center
+            cell.border = border_cell
+
     ws3.column_dimensions["A"].width = 28
     ws3.column_dimensions["B"].width = 12
     for day in range(1, gun_sayisi + 1):
         col_letter = get_column_letter(day + 2)
         ws3.column_dimensions[col_letter].width = 4.5
+
+    for m_idx in range(len(ek_basliklar)):
+        col_letter = get_column_letter(start_col + m_idx)
+        ws3.column_dimensions[col_letter].width = 14
 
     output = BytesIO()
     wb.save(output)
@@ -875,7 +1009,6 @@ def generate_3_tab_excel(
 if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     hata_listesi = []
 
-    # Birim Bazlı Personel Sayıları Kontrolü
     pcr_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "PCR"]
     mikro_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "Mikro"]
     kultur_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "Kültür"]
@@ -1027,11 +1160,9 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             for d in range(1, gun_sayisi + 1):
                 gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
                 if gun_nobetcileri:
-                    # O günkü nöbetçilerden geçmiş + bu ay biriken acil saati en az olanı seç
                     secilen_acil = min(gun_nobetcileri, key=lambda p: kumulatif_acil_saat[p])
                     acil_nobet_dict[secilen_acil].add(d)
                     
-                    # Saat yükünü kumulatife ekle
                     g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
                     kumulatif_acil_saat[secilen_acil] += g_saat
 
@@ -1131,9 +1262,40 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                             if day_is_off: p_row[str(d)] = "T"
                             elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
                             else: p_row[str(d)] = "8"
+
+                m = calculate_personel_puantaj_metrikleri(
+                    p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+                )
+                p_row["Toplam çalışma saati"] = m["Toplam Çalışma Saati"]
+                p_row["Aylık Çalışma Saati"] = m["Aylık Çalışma Saati"]
+                p_row["Fazla nöbet saati"] = m["Fazla Nöbet Saati"]
+                p_row["Normal Nöbet - Artırımlı (Gece)"] = m["Normal_Gece"]
+                p_row["Normal Nöbet - Artırımsız (Normal)"] = m["Normal_Normal"]
+                p_row["Riskli Nöbet - Artırımlı (Gece)"] = m["Riskli_Gece"]
+                p_row["Riskli Nöbet - Artırımsız (Normal)"] = m["Riskli_Normal"]
+
                 puantaj_rows.append(p_row)
 
             df_puantaj = pd.DataFrame(puantaj_rows)
+
+            excel_bytes = generate_3_tab_excel(
+                yil,
+                ay,
+                nobetci_personeller,
+                tum_girilen_personeller,
+                nobet_dict,
+                acil_nobet_dict,
+                gecmis_istatistik,
+                gecmis_acil_istatistik,
+                gun_sayisi,
+                birim_secimi,
+                resmi_tatil_gunleri,
+                yarim_gun_tatil_gunleri
+            )
+
+            b64 = base64.b64encode(excel_bytes.getvalue()).decode()
+            file_name = f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx"
+            href_link = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{file_name}" class="direct-download-btn">📥 3 Sekmeli Resmi Excel Dosyasını İndir (.xlsx)</a>'
 
             tab1, tab2, tab3, tab4 = st.tabs([
                 "📅 Aylık Çizelge",
@@ -1143,7 +1305,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             ])
 
             with tab1:
-                st.subheader("🗓️ Birim Bazlı Aylık Görev Listesi")
+                st.subheader("🗓️ Birim Bazlı Aylık Görev Listesi (PCR | Mikro | Kültür)")
                 st.dataframe(df_liste, use_container_width=True, height=450)
 
             with tab2:
@@ -1155,34 +1317,9 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 st.dataframe(df_puantaj, use_container_width=True)
 
             with tab4:
-                st.subheader("📥 3 Sekmeli Resmi Excel İndirme Paneli")
-                st.write(
-                    "Aşağıdaki butona tıklayarak **Aylık Çizelge**, **Mesai"
-                    " İstatistikleri (Acil Nöbet Dahil)** ve **Resmi Puantaj Tablosu**'nu"
-                    " tek bir Excel dosyasında indirebilirsiniz:"
-                )
-
-                excel_bytes = generate_3_tab_excel(
-                    yil,
-                    ay,
-                    nobetci_personeller,
-                    tum_girilen_personeller,
-                    nobet_dict,
-                    acil_nobet_dict,
-                    gecmis_istatistik,
-                    gecmis_acil_istatistik,
-                    gun_sayisi,
-                    birim_secimi,
-                    resmi_tatil_gunleri,
-                    yarim_gun_tatil_gunleri
-                )
-
-                st.download_button(
-                    label="📥 3 Sekmeli Tam Excel Dosyasını İndir (.xlsx)",
-                    data=excel_bytes,
-                    file_name=f"Nobet_ve_Puantaj_Listesi_{birim_secimi}_{yil}_{ay}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                st.subheader("📥 Excel Dosyasını İndir")
+                st.write("Aşağıdaki butona tıkladığınızda dosyanız doğrudan bilgisayarınıza indirilecektir:")
+                st.markdown(href_link, unsafe_allow_html=True)
 
         else:
             st.error("❌ Çözüm bulunamadı! Girilen kısıtlar, izinler veya sabit nöbetler çakışıyor olabilir.")
