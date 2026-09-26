@@ -212,18 +212,15 @@ if uploaded_file is not None:
 def get_prev(p_name, category): return gecmis_istatistik.get(p_name, {}).get(category, 0)
 def get_prev_acil(p_name): return gecmis_acil_istatistik.get(p_name, 0)
 
-# --- 🌟 YENİ DİNAMİK PERSONEL MAZERET VE SABİT NÖBET GİRİŞ PANELİ 🌟 ---
+# --- PERSONEL MAZERET VE SABİT NÖBET GİRİŞ PANELİ ---
 st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
 
 if "mazeret_satir_sayisi" not in st.session_state:
     st.session_state.mazeret_satir_sayisi = 1
 
-def mazeret_satir_ekle():
-    st.session_state.mazeret_satir_sayisi += 1
-
+def mazeret_satir_ekle(): st.session_state.mazeret_satir_sayisi += 1
 def mazeret_satir_cikar():
-    if st.session_state.mazeret_satir_sayisi > 1:
-        st.session_state.mazeret_satir_sayisi -= 1
+    if st.session_state.mazeret_satir_sayisi > 1: st.session_state.mazeret_satir_sayisi -= 1
 
 izinler = {p: [] for p in nobetci_personeller}
 sabit_nobetler = {p: [] for p in nobetci_personeller}
@@ -232,28 +229,9 @@ toplam_sabit_sayisi = 0
 
 for m_idx in range(st.session_state.mazeret_satir_sayisi):
     c1, c2, c3 = st.columns([1.2, 1.8, 1.8])
-    with c1:
-        p_secilen = st.selectbox(
-            f"Personel #{m_idx+1}:",
-            options=["Seçiniz..."] + nobetci_personeller,
-            key=f"m_personel_{m_idx}"
-        )
-    with c2:
-        selected_days = st.multiselect(
-            f"Mazeret / İzin Günleri #{m_idx+1}:",
-            options=gun_secenekleri,
-            default=[],
-            key=f"m_leave_{m_idx}",
-            placeholder="Gün seçin..."
-        )
-    with c3:
-        selected_sabit_days = st.multiselect(
-            f"Sabit Nöbet Günleri #{m_idx+1}:",
-            options=gun_secenekleri,
-            default=[],
-            key=f"m_forced_{m_idx}",
-            placeholder="Gün seçin..."
-        )
+    with c1: p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
+    with c2: selected_days = st.multiselect(f"Mazeret / İzin Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}", placeholder="Gün seçin...")
+    with c3: selected_sabit_days = st.multiselect(f"Sabit Nöbet Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}", placeholder="Gün seçin...")
 
     if p_secilen != "Seçiniz...":
         izinler[p_secilen].extend([d - 1 for d in selected_days])
@@ -262,10 +240,8 @@ for m_idx in range(st.session_state.mazeret_satir_sayisi):
         toplam_sabit_sayisi += len(selected_sabit_days)
 
 col_m_btn1, col_m_btn2, _ = st.columns([1.2, 1.2, 3.6])
-with col_m_btn1:
-    st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
-with col_m_btn2:
-    st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
+with col_m_btn1: st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
+with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -301,28 +277,61 @@ m6.metric("🛡️ Nöbet Muaf", f"{len(muaf_personeller)} Kişi")
 st.markdown("<br>", unsafe_allow_html=True)
 
 
-# --- DİNAMİK SAAT VE TATİL YARDIMCI FONKSİYONLARI ---
+# --- DİNAMİK HESAPLAMA YARDIMCI FONKSİYONLARI ---
 def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     dt = datetime.date(yil, ay, day)
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+    """
+    Net Nöbet Saati Hesaplama Mantığı (Acil ve Normal Dahil):
+    Nöbet Süresi - (Gündüz Normal Mesai Düşümü) - (Ertesi Gün Nİ Mahsubu)
+    """
     dt = datetime.date(yil, ay, d)
-    if d in yarim_gun_tatil_gunleri: return 19
-    if (d + 1) in yarim_gun_tatil_gunleri: return 11
-
-    if is_day_off(yil, ay, d, resmi_tatil_gunleri):
-        if d < gun_sayisi:
-            next_is_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
-            next_is_half = (d + 1) in yarim_gun_tatil_gunleri
-            if not next_is_off and not next_is_half: return 16
-        return 24
-        
-    if d < gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri): return 16
     w = dt.weekday()
-    if w in [0, 1, 2, 3]: return 8
-    elif w in [4, 6]: return 16
-    else: return 24
+
+    # 1. ARİFE GÜNÜ NÖBETİ (Örn: 28 Ekim)
+    if d in yarim_gun_tatil_gunleri:
+        # Nöbet 19s sürer. O günkü 5s gündüz çalışması düşülür. Ertesi gün tatilse Nİ borcu yoktur. Net = 19 Saat.
+        return 19
+
+    # 2. HAFTA SONU CUMARTESİ
+    if w == 5:
+        # Mesai borcu yok, ertesi gün Pazar (tatil) borç yok. Net = 24 Saat.
+        return 24
+
+    # 3. HAFTA SONU PAZAR VEYA PAZARTESİYE GEÇEN TATİL NÖBETİ
+    if w == 6:
+        # Pazar günü gündüz mesai yok (0s). Ertesi gün Pazartesi Nİ mahsubu (8s). Net = 16 Saat.
+        return 16
+
+    # 4. TAM GÜN RESMİ TATİL NÖBETİ (Örn: 29 Ekim)
+    if d in resmi_tatil_gunleri:
+        # Gündüz mesai borcu yok (0s). Ertesi gün mesai varsa Nİ mahsubu (8s). Net = 16 Saat.
+        return 16
+
+    # 5. CUMA GÜNÜ NÖBETİ
+    if w == 4:
+        # Cuma gündüz mesai (8s). Cumartesi tatil olduğu için Nİ düşülmez (0s). Net = 16 Saat.
+        return 16
+
+    # 6. AYIN SON GÜNÜ (HAFTA İÇİ) NÖBETİ (Peşin Ödeme Kuralı)
+    if d == gun_sayisi:
+        # O günkü mesai düşülür (8s). Sonraki ayın Nİ mahsubu o ayın puantajından düşülmez (0s). Net = 16 Saat.
+        return 16
+
+    # 7. ERTESİ GÜNÜ ARİFE VEYA TATİL OLAN HAFTA İÇİ GÜNLER (Örn: 27 Ekim)
+    if (d + 1) in yarim_gun_tatil_gunleri:
+        # O günkü mesai (8s). Ertesi gün Arife Nİ mahsubu (5s). Net = 24 - 8 - 5 = 11 Saat.
+        return 11
+
+    if (d + 1) in resmi_tatil_gunleri:
+        # O günkü mesai (8s). Ertesi gün Tam Tatil olduğu için Nİ düşülmez (0s). Net = 16 Saat.
+        return 16
+
+    # 8. STANDART HAFTA İÇİ NÖBETİ (Pazartesi - Perşembe)
+    # O günkü mesai (8s) + Ertesi gün Nİ mahsubu (8s). Net = 24 - 8 - 8 = 8 Saat.
+    return 8
 
 def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
     toplam_saat = 0
@@ -345,8 +354,6 @@ def calculate_personel_puantaj_metrikleri(
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
-        dt = datetime.date(yil, ay, d)
-        w = dt.weekday()
 
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
@@ -354,13 +361,18 @@ def calculate_personel_puantaj_metrikleri(
         if val == "24":
             is_risk = (d in acil_days_set)
             
+            # Net Nöbet Saati
             n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-            next_is_holiday = (d in yarim_gun_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri) or ((d + 1) in resmi_tatil_gunleri)
-            if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]) or next_is_holiday:
+            # Gece (Artırımlı) Saati Belirleme
+            if n_saat in [16, 24]:
+                g_saat = 12
+            elif n_saat in [8, 11]:
+                g_saat = 8
+            elif n_saat == 19:
                 g_saat = 12
             else:
-                g_saat = 8
+                g_saat = min(12, n_saat)
 
             gunduz_saat = max(0, n_saat - g_saat)
 
@@ -386,18 +398,8 @@ def calculate_personel_puantaj_metrikleri(
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
-    yil,
-    ay,
-    nobetci_personeller,
-    tum_girilen_personeller,
-    nobet_dict,
-    acil_nobet_dict,
-    gecmis_istatistik,
-    gecmis_acil_istatistik,
-    gun_sayisi,
-    birim_secimi,
-    resmi_tatil_gunleri,
-    yarim_gun_tatil_gunleri
+    yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
+    gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
     wb = openpyxl.Workbook()
 
@@ -995,18 +997,8 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             df_puantaj = pd.DataFrame(puantaj_rows)
 
             excel_bytes = generate_3_tab_excel(
-                yil,
-                ay,
-                nobetci_personeller,
-                tum_girilen_personeller,
-                nobet_dict,
-                acil_nobet_dict,
-                gecmis_istatistik,
-                gecmis_acil_istatistik,
-                gun_sayisi,
-                birim_secimi,
-                resmi_tatil_gunleri,
-                yarim_gun_tatil_gunleri
+                yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
+                gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
             )
 
             b64 = base64.b64encode(excel_bytes.getvalue()).decode()
