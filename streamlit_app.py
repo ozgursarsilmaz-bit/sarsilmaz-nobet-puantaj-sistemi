@@ -103,15 +103,6 @@ st.markdown(
     .direct-download-btn:hover { background: linear-gradient(135deg, #0a58ca 0%, #084298 100%); transform: translateY(-1px); box-shadow: 0 6px 14px rgba(13, 110, 253, 0.35); }
     [data-testid="stHorizontalBlock"] { align-items: center !important; gap: 0.5rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
-    .personel-giris-baslik { font-weight: 700; font-size: 0.75rem; color: #495057; padding: 2px 4px; white-space: nowrap; text-transform: uppercase; }
-    .personel-giris-adi { min-height: 28px; height: 28px; display: flex; align-items: center; font-weight: 600; font-size: 0.78rem; color: #212529; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .personel-giris-ayirici { margin: 2px 0 !important; padding: 0 !important; height: 1px; border: 0; border-top: 1px solid #EDEFF1; }
-    div[data-testid="stMultiSelect"] { margin: 0 !important; padding: 0 !important; }
-    div[data-testid="stMultiSelect"] > div { margin: 0 !important; padding: 0 !important; }
-    div[data-testid="stMultiSelect"] div[data-baseweb="select"] { min-height: 28px !important; height: 28px !important; border-radius: 6px !important; }
-    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div { max-height: 28px !important; min-height: 28px !important; overflow-y: auto !important; padding: 0px 4px !important; align-content: center; }
-    div[data-testid="stMultiSelect"] [data-baseweb="tag"] { font-size: 0.68rem !important; line-height: 16px !important; height: 18px !important; margin: 1px 2px 1px 0 !important; padding: 0 4px !important; }
-    div[data-testid="stMultiSelect"] + div { display: none !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -209,8 +200,19 @@ if uploaded_file is not None:
     except Exception as e:
         st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
-def get_prev(p_name, category): return gecmis_istatistik.get(p_name, {}).get(category, 0)
-def get_prev_acil(p_name): return gecmis_acil_istatistik.get(p_name, 0)
+def get_prev(p_name, category):
+    p_norm = tr_norm(p_name)
+    for key, val in gecmis_istatistik.items():
+        if tr_norm(key) == p_norm:
+            return val.get(category, 0)
+    return 0
+
+def get_prev_acil(p_name):
+    p_norm = tr_norm(p_name)
+    for key, val in gecmis_acil_istatistik.items():
+        if tr_norm(key) == p_norm:
+            return val
+    return 0
 
 # --- PERSONEL MAZERET VE SABİT NÖBET GİRİŞ PANELİ ---
 st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
@@ -245,6 +247,33 @@ with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_ci
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# --- SABİT ACİL NÖBET SEÇİM PANELİ ---
+st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
+if "acil_satir_sayisi" not in st.session_state:
+    st.session_state.acil_satir_sayisi = 1
+
+def acil_satir_ekle(): st.session_state.acil_satir_sayisi += 1
+def acil_satir_cikar():
+    if st.session_state.acil_satir_sayisi > 1: st.session_state.acil_satir_sayisi -= 1
+
+sabit_acil_nobetler = {p: [] for p in nobetci_personeller}
+toplam_sabit_acil_sayisi = 0
+
+for a_idx in range(st.session_state.acil_satir_sayisi):
+    c1, c2 = st.columns([1.5, 3.3])
+    with c1: p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
+    with c2: selected_acil_days = st.multiselect(f"Sabit Acil Nöbet Günleri #{a_idx+1}:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}", placeholder="Gün seçin...")
+
+    if p_acil_secilen != "Seçiniz...":
+        sabit_acil_nobetler[p_acil_secilen].extend(selected_acil_days)
+        toplam_sabit_acil_sayisi += len(selected_acil_days)
+
+col_a_btn1, col_a_btn2, _ = st.columns([1.2, 1.2, 3.6])
+with col_a_btn1: st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
+with col_a_btn2: st.button("➖ Acil Satırı Sil", on_click=acil_satir_cikar)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
 # --- KİŞİLER ARASI ÖZEL NÖBET ARALIĞI PANELİ ---
 st.markdown('<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı Kuralları</div>', unsafe_allow_html=True)
 if "kisi_kisit_sayisi" not in st.session_state: st.session_state.kisi_kisit_sayisi = 1
@@ -273,7 +302,7 @@ m2.metric("📅 Ayın Gün Sayısı", f"{gun_sayisi} Gün")
 m3.metric("🎯 Nöbet Slotu", f"{gun_sayisi * gunluk_nobetci * (3 if birim_secimi=='Tüm Laboratuvar (Birleşik)' else 1)} Nöbet")
 m4.metric("🏖️ Kayıtlı İzinler", f"{toplam_izin_sayisi} Gün")
 m5.metric("📌 Sabit Nöbetler", f"{toplam_sabit_sayisi} Gün")
-m6.metric("🛡️ Nöbet Muaf", f"{len(muaf_personeller)} Kişi")
+m6.metric("🚨 Sabit Acil Nöbet", f"{toplam_sabit_acil_sayisi} Gün")
 st.markdown("<br>", unsafe_allow_html=True)
 
 
@@ -283,54 +312,25 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-    """
-    Net Nöbet Saati Hesaplama Mantığı (Acil ve Normal Dahil):
-    Nöbet Süresi - (Gündüz Normal Mesai Düşümü) - (Ertesi Gün Nİ Mahsubu)
-    """
     dt = datetime.date(yil, ay, d)
     w = dt.weekday()
 
-    # 1. ARİFE GÜNÜ NÖBETİ (Örn: 28 Ekim)
     if d in yarim_gun_tatil_gunleri:
-        # Nöbet 19s sürer. O günkü 5s gündüz çalışması düşülür. Ertesi gün tatilse Nİ borcu yoktur. Net = 19 Saat.
         return 19
-
-    # 2. HAFTA SONU CUMARTESİ
     if w == 5:
-        # Mesai borcu yok, ertesi gün Pazar (tatil) borç yok. Net = 24 Saat.
         return 24
-
-    # 3. HAFTA SONU PAZAR VEYA PAZARTESİYE GEÇEN TATİL NÖBETİ
     if w == 6:
-        # Pazar günü gündüz mesai yok (0s). Ertesi gün Pazartesi Nİ mahsubu (8s). Net = 16 Saat.
         return 16
-
-    # 4. TAM GÜN RESMİ TATİL NÖBETİ (Örn: 29 Ekim)
     if d in resmi_tatil_gunleri:
-        # Gündüz mesai borcu yok (0s). Ertesi gün mesai varsa Nİ mahsubu (8s). Net = 16 Saat.
         return 16
-
-    # 5. CUMA GÜNÜ NÖBETİ
     if w == 4:
-        # Cuma gündüz mesai (8s). Cumartesi tatil olduğu için Nİ düşülmez (0s). Net = 16 Saat.
         return 16
-
-    # 6. AYIN SON GÜNÜ (HAFTA İÇİ) NÖBETİ (Peşin Ödeme Kuralı)
     if d == gun_sayisi:
-        # O günkü mesai düşülür (8s). Sonraki ayın Nİ mahsubu o ayın puantajından düşülmez (0s). Net = 16 Saat.
         return 16
-
-    # 7. ERTESİ GÜNÜ ARİFE VEYA TATİL OLAN HAFTA İÇİ GÜNLER (Örn: 27 Ekim)
     if (d + 1) in yarim_gun_tatil_gunleri:
-        # O günkü mesai (8s). Ertesi gün Arife Nİ mahsubu (5s). Net = 24 - 8 - 5 = 11 Saat.
         return 11
-
     if (d + 1) in resmi_tatil_gunleri:
-        # O günkü mesai (8s). Ertesi gün Tam Tatil olduğu için Nİ düşülmez (0s). Net = 16 Saat.
         return 16
-
-    # 8. STANDART HAFTA İÇİ NÖBETİ (Pazartesi - Perşembe)
-    # O günkü mesai (8s) + Ertesi gün Nİ mahsubu (8s). Net = 24 - 8 - 8 = 8 Saat.
     return 8
 
 def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
@@ -360,11 +360,8 @@ def calculate_personel_puantaj_metrikleri(
 
         if val == "24":
             is_risk = (d in acil_days_set)
-            
-            # Net Nöbet Saati
             n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-            # Gece (Artırımlı) Saati Belirleme
             if n_saat in [16, 24]:
                 g_saat = 12
             elif n_saat in [8, 11]:
@@ -548,7 +545,7 @@ def generate_3_tab_excel(
 
         c_i = 2
         for g in gunler_listesi:
-            devir = int(gecmis_istatistik.get(p, {}).get(g, 0))
+            devir = int(get_prev(p, g))
             bu_ay = int(bu_ay_gunler[g])
             toplam = devir + bu_ay
 
@@ -563,26 +560,26 @@ def generate_3_tab_excel(
         cell_saat.font = font_bold
         cell_saat.alignment = align_center
         cell_saat.border = border_cell
+        c_i += 1
 
-        cell_nobet = ws2.cell(row=p_idx, column=c_i + 1, value=int(bu_ay_toplam_nobet))
+        cell_nobet = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_toplam_nobet))
         cell_nobet.font = font_bold
         cell_nobet.alignment = align_center
         cell_nobet.border = border_cell
+        c_i += 1
 
         bu_ay_acil_saat = sum(
             calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
             for d in acil_nobet_dict.get(p, set())
         )
-        acil_devir = int(gecmis_acil_istatistik.get(p, 0))
+        acil_devir = int(get_prev_acil(p))
         acil_toplam = acil_devir + bu_ay_acil_saat
 
-        c_i += 2
-        for v in [acil_devir, bu_ay_acil_saat, acil_toplam]:
-            cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
-            cell.font = font_bold if c_i % 3 == 0 else font_body
+        for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_toplam]):
+            cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
+            cell.font = font_bold if idx == 2 else font_body
             cell.alignment = align_center
             cell.border = border_cell
-            c_i += 1
 
     ws2.column_dimensions["A"].width = 25
 
@@ -872,17 +869,28 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     if solver.Value(x[(p, d)]) == 1:
                         nobet_dict[p].add(d + 1)
 
-            # ACİL NÖBET SAAT BAZLI ADİL DAĞITIM ALGORİTMASI
+            # ACİL NÖBET DAĞITIM ALGORİTMASI (MANUEL + DİNAMİK OTOMATİK)
             kumulatif_acil_saat = {p: get_prev_acil(p) for p in nobetci_personeller}
 
+            # 1. Aşama: Manuel Tanımlanan Sabit Acil Nöbetlerin Atanması
+            for p, g_list in sabit_acil_nobetler.items():
+                for d in g_list:
+                    if d in nobet_dict[p]:
+                        acil_nobet_dict[p].add(d)
+                        g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+                        kumulatif_acil_saat[p] += g_saat
+
+            # 2. Aşama: Manuel Atanmayan Günlerin Adil Saat Dağıtımı ile Tamamlanması
             for d in range(1, gun_sayisi + 1):
-                gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
-                if gun_nobetcileri:
-                    secilen_acil = min(gun_nobetcileri, key=lambda p: kumulatif_acil_saat[p])
-                    acil_nobet_dict[secilen_acil].add(d)
-                    
-                    g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-                    kumulatif_acil_saat[secilen_acil] += g_saat
+                # Bu gün zaten bir acil nöbetçi var mı kontrol et
+                mevcut_acil = [p for p in nobetci_personeller if d in acil_nobet_dict[p]]
+                if not mevcut_acil:
+                    gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
+                    if gun_nobetcileri:
+                        secilen_acil = min(gun_nobetcileri, key=lambda p: kumulatif_acil_saat[p])
+                        acil_nobet_dict[secilen_acil].add(d)
+                        g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+                        kumulatif_acil_saat[secilen_acil] += g_saat
 
             # TABLO VE EKRAN HAZIRLIKLARI
             liste_data = []
