@@ -306,15 +306,14 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
-    """
-    TAM YÜZDE 100 DOĞRULANMIŞ METRİK HESAPLAMA FONKSİYONU
-    ACİL OLAN GÜNLER BİREBİR SARI/ACİL SÜTUNA, NORMAL NÖBETLER NORMAL SÜTUNA YAZAR
-    """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
     norm_gece = 0
     risk_gece = 0
+    
+    norm_nobet_saat_toplam = 0
+    risk_nobet_saat_toplam = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
@@ -328,22 +327,39 @@ def calculate_personel_puantaj_metrikleri(
             is_risk = (d in acil_days_set)
             next_is_holiday = (d in yarim_gun_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri) or ((d + 1) in resmi_tatil_gunleri)
             
+            # Gece (Artırımlı) Saat Hesabı
             if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]) or next_is_holiday:
                 g_saat = 12
             else:
                 g_saat = 8
 
-            if is_risk: risk_gece += g_saat
-            else: norm_gece += g_saat
+            if is_risk:
+                risk_gece += g_saat
+                risk_nobet_saat_toplam += 24
+            else:
+                norm_gece += g_saat
+                norm_nobet_saat_toplam += 24
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
     kalan_fazla_gunduz = max(0, fazla_nobet - (norm_gece + risk_gece))
 
-    if risk_gece > 0 and kalan_fazla_gunduz > 0:
-        norm_normal = kalan_fazla_gunduz // 2
-        risk_normal = kalan_fazla_gunduz - norm_normal
+    # --- TAM DOĞRU KALAN GÜNDÜZ MESAİ DAĞITIM ALGORİTMASI ---
+    toplam_nobet_saati = norm_nobet_saat_toplam + risk_nobet_saat_toplam
+
+    if kalan_fazla_gunduz > 0 and toplam_nobet_saati > 0:
+        if norm_nobet_saat_toplam == 0:
+            risk_normal = kalan_fazla_gunduz
+            norm_normal = 0
+        elif risk_nobet_saat_toplam == 0:
+            norm_normal = kalan_fazla_gunduz
+            risk_normal = 0
+        else:
+            # Acil ve Normal nöbetlerin oranına göre gündüz fazla mesaisinin hassas dağıtımı
+            risk_oran = risk_nobet_saat_toplam / toplam_nobet_saati
+            risk_normal = round(kalan_fazla_gunduz * risk_oran)
+            norm_normal = kalan_fazla_gunduz - risk_normal
     else:
-        norm_normal = kalan_fazla_gunduz
+        norm_normal = 0
         risk_normal = 0
 
     return {
@@ -355,7 +371,6 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Gece": risk_gece,
         "Riskli_Normal": risk_normal,
     }
-
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
