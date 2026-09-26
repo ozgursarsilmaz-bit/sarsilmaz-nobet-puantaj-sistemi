@@ -306,11 +306,6 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
-    """
-    TAM YÜZDE 100 MUTABIK KALINAN BAĞIMSIZ NORMAL VE ACİL (SARI) NÖBET HESAPLAMA FONKSİYONU
-    - Sarı Nöbetler doğrudan Riskli_Gece ve Riskli_Normal sütunlarına aktarılır.
-    - Normal (Beyaz) Nöbetler doğrudan Normal_Gece ve Normal_Normal sütunlarına aktarılır.
-    """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
@@ -330,10 +325,8 @@ def calculate_personel_puantaj_metrikleri(
         if val == "24":
             is_risk = (d in acil_days_set)
             
-            # Tam Nöbet Saati Hesaplama (19, 24 vb.)
             n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-            # Gece (Artırımlı) Saat Hesabı
             next_is_holiday = (d in yarim_gun_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri) or ((d + 1) in resmi_tatil_gunleri)
             if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]) or next_is_holiday:
                 g_saat = 12
@@ -342,7 +335,6 @@ def calculate_personel_puantaj_metrikleri(
 
             gunduz_saat = max(0, n_saat - g_saat)
 
-            # Bağımsız Ayrım Mantığı
             if is_risk:
                 risk_gece += g_saat
                 risk_normal += gunduz_saat
@@ -397,11 +389,9 @@ def generate_3_tab_excel(
 
     align_center = Alignment(horizontal="center", vertical="center")
     align_left = Alignment(horizontal="left", vertical="center")
-    
-    # 🌟 DİKEY BAŞLIK METİN ALIGNMENT'I (TEXT ROTATION = 90)
     align_vertical_header = Alignment(horizontal="center", vertical="center", text_rotation=90, wrap_text=True)
 
-    # 1. SEKME: GÖREV LİSTESİ (PCR | Mikro | Kültür)
+    # 1. SEKME: GÖREV LİSTESİ
     ws1 = wb.active
     ws1.title = "Aylık Görev Listesi"
     ws1.views.sheetView[0].showGridLines = True
@@ -565,11 +555,10 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU (DİKEY METİNLER İLE EKSİKSİZ)
+    # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
-    # 🌟 DİKEY BAŞLIKLAR İÇİN HÜCRE YÜKSEKLİĞİ (110 PX)
     ws3.row_dimensions[5].height = 110
 
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
@@ -609,8 +598,6 @@ def generate_3_tab_excel(
         cell = ws3.cell(row=5, column=c_i, value=b_adi)
         cell.font = font_header
         cell.fill = fill_green_bg
-        
-        # 🌟 DİKEY METİN ROTASYONU (TEXT_ROTATION = 90)
         cell.alignment = align_vertical_header
         cell.border = border_cell
 
@@ -816,9 +803,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         saat_farki = model.NewIntVar(0, 1000, "saat_farki")
         model.Add(saat_farki == max_bu_ay_saat - min_bu_ay_saat)
 
+        # 🌟 DÜZELTİLEN KATEGORİ SÖZLÜĞÜ (IMLA HATASI GİDERİLDİ)
         kategoriler = {
             "Pazartesi": ([0], 500), "Salı": ([1], 500), "Çarşamba": ([2], 500),
-            "Perşembe": ([3], 1000), "Cuma": ([1500]), "Cumartesi": ([2500]), "Pazar": ([2000])
+            "Perşembe": ([3], 1000), "Cuma": ([4], 1500), "Cumartesi": ([5], 2500), "Pazar": ([6], 2000)
         }
 
         kategori_farklari = []
