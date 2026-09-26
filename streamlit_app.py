@@ -306,14 +306,18 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
+    """
+    TAM YÜZDE 100 MUTABIK KALINAN BAĞIMSIZ NORMAL VE ACİL (SARI) NÖBET HESAPLAMA FONKSİYONU
+    - Sarı Nöbetler doğrudan Riskli_Gece ve Riskli_Normal sütunlarına aktarılır.
+    - Normal (Beyaz) Nöbetler doğrudan Normal_Gece ve Normal_Normal sütunlarına aktarılır.
+    """
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
     norm_gece = 0
+    norm_normal = 0
     risk_gece = 0
-    
-    norm_nobet_saat_toplam = 0
-    risk_nobet_saat_toplam = 0
+    risk_normal = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
@@ -325,42 +329,28 @@ def calculate_personel_puantaj_metrikleri(
 
         if val == "24":
             is_risk = (d in acil_days_set)
-            next_is_holiday = (d in yarim_gun_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri) or ((d + 1) in resmi_tatil_gunleri)
             
+            # Tam Nöbet Saati Hesaplama (19, 24 vb.)
+            n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+
             # Gece (Artırımlı) Saat Hesabı
+            next_is_holiday = (d in yarim_gun_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri) or ((d + 1) in resmi_tatil_gunleri)
             if (d in yarim_gun_tatil_gunleri) or (d in resmi_tatil_gunleri) or (w in [4, 5, 6]) or next_is_holiday:
                 g_saat = 12
             else:
                 g_saat = 8
 
+            gunduz_saat = max(0, n_saat - g_saat)
+
+            # Bağımsız Ayrım Mantığı
             if is_risk:
                 risk_gece += g_saat
-                risk_nobet_saat_toplam += 24
+                risk_normal += gunduz_saat
             else:
                 norm_gece += g_saat
-                norm_nobet_saat_toplam += 24
+                norm_normal += gunduz_saat
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
-    kalan_fazla_gunduz = max(0, fazla_nobet - (norm_gece + risk_gece))
-
-    # --- TAM DOĞRU KALAN GÜNDÜZ MESAİ DAĞITIM ALGORİTMASI ---
-    toplam_nobet_saati = norm_nobet_saat_toplam + risk_nobet_saat_toplam
-
-    if kalan_fazla_gunduz > 0 and toplam_nobet_saati > 0:
-        if norm_nobet_saat_toplam == 0:
-            risk_normal = kalan_fazla_gunduz
-            norm_normal = 0
-        elif risk_nobet_saat_toplam == 0:
-            norm_normal = kalan_fazla_gunduz
-            risk_normal = 0
-        else:
-            # Acil ve Normal nöbetlerin oranına göre gündüz fazla mesaisinin hassas dağıtımı
-            risk_oran = risk_nobet_saat_toplam / toplam_nobet_saati
-            risk_normal = round(kalan_fazla_gunduz * risk_oran)
-            norm_normal = kalan_fazla_gunduz - risk_normal
-    else:
-        norm_normal = 0
-        risk_normal = 0
 
     return {
         "Toplam Çalışma Saati": toplam_calisma,
@@ -371,6 +361,7 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Gece": risk_gece,
         "Riskli_Normal": risk_normal,
     }
+
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
@@ -399,8 +390,6 @@ def generate_3_tab_excel(
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
     fill_grey = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-    
-    # 🌟 ACİL NÖBET İÇİN ÖZEL SARI DOLGU RENGİ (FFF2CC)
     fill_yellow_acil = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 
     thin_side = Side(style="thin", color="A6A6A6")
@@ -408,6 +397,9 @@ def generate_3_tab_excel(
 
     align_center = Alignment(horizontal="center", vertical="center")
     align_left = Alignment(horizontal="left", vertical="center")
+    
+    # 🌟 DİKEY BAŞLIK METİN ALIGNMENT'I (TEXT ROTATION = 90)
+    align_vertical_header = Alignment(horizontal="center", vertical="center", text_rotation=90, wrap_text=True)
 
     # 1. SEKME: GÖREV LİSTESİ (PCR | Mikro | Kültür)
     ws1 = wb.active
@@ -573,11 +565,13 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU (24 + SARI ACİL DOLGUSU)
+    # 3. SEKME: PUANTAJ TABLOSU (DİKEY METİNLER İLE EKSİKSİZ)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
-    ws3.row_dimensions[5].height = 25
+    # 🌟 DİKEY BAŞLIKLAR İÇİN HÜCRE YÜKSEKLİĞİ (110 PX)
+    ws3.row_dimensions[5].height = 110
+
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
     ws3.cell(row=5, column=1).font = font_header
     ws3.cell(row=5, column=1).alignment = align_left
@@ -600,22 +594,24 @@ def generate_3_tab_excel(
         cell.fill = fill_grey if day in off_days else fill_header
 
     ek_basliklar = [
-        ("Toplam çalışma saati", 5),
-        ("Aylık Çalışma Saati", 5),
-        ("Fazla nöbet saati", 5),
-        ("Normal Nöbet - Artırımlı (Gece)", 4),
-        ("Normal Nöbet - Artırımsız (Normal)", 5),
-        ("Riskli Nöbet - Artırımlı (Gece)", 4),
-        ("Riskli Nöbet - Artırımsız (Normal)", 5),
+        "Toplam çalışma saati",
+        "Aylık Çalışma Saati",
+        "Fazla nöbet saati",
+        "Normal Nöbet - Artırımlı (Gece)",
+        "Normal Nöbet - Artırımsız (Normal)",
+        "Riskli Nöbet - Artırımlı (Gece)",
+        "Riskli Nöbet - Artırımsız (Normal)",
     ]
 
     start_col = gun_sayisi + 3
-    for idx, (b_adi, r_h) in enumerate(ek_basliklar):
+    for idx, b_adi in enumerate(ek_basliklar):
         c_i = start_col + idx
         cell = ws3.cell(row=5, column=c_i, value=b_adi)
         cell.font = font_header
         cell.fill = fill_green_bg
-        cell.alignment = align_center
+        
+        # 🌟 DİKEY METİN ROTASYONU (TEXT_ROTATION = 90)
+        cell.alignment = align_vertical_header
         cell.border = border_cell
 
     for idx, p in enumerate(tum_girilen_personeller):
@@ -659,13 +655,10 @@ def generate_3_tab_excel(
                     cell.font = font_body
             else:
                 if day in p_shifts:
-                    cell.value = 24  # METİNSİZ, DOĞRUDAN TAM SAYI '24'
+                    cell.value = 24
                     cell.font = font_24
-                    
-                    # 🌟 EĞER BU NÖBET ACİL NÖBET İSE SARI RENK İLE VURGULA
                     if day in p_acils:
                         cell.fill = fill_yellow_acil
-
                 elif (day - 1) in p_shifts:
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri): cell.value = "T"
                     else:
@@ -711,7 +704,7 @@ def generate_3_tab_excel(
 
     for m_idx in range(len(ek_basliklar)):
         col_letter = get_column_letter(start_col + m_idx)
-        ws3.column_dimensions[col_letter].width = 14
+        ws3.column_dimensions[col_letter].width = 6.5
 
     output = BytesIO()
     wb.save(output)
@@ -825,7 +818,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
         kategoriler = {
             "Pazartesi": ([0], 500), "Salı": ([1], 500), "Çarşamba": ([2], 500),
-            "Perşembe": ([3], 1000), "Cuma": ([4], 1500), "Cumartesi": ([5], 2500), "Pazar": ([6], 2000)
+            "Perşembe": ([3], 1000), "Cuma": ([1500]), "Cumartesi": ([2500]), "Pazar": ([2000])
         }
 
         kategori_farklari = []
