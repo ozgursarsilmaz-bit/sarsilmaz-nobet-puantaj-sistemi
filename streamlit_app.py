@@ -1031,12 +1031,3 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
         else:
             st.error("❌ Çözüm bulunamadı! Girilen kısıtlar, izinler veya sabit nöbetler çakışıyor olabilir.")
-# streamlit_app.py dosyasının en altına ekleyin:
-import ekim_dosyasi_olustur
-
-with open("Ekim_2026_Mevcut_Nobet_Listesi.xlsx", "rb") as f:
-  st.download_button(
-      "📥 Ekim 2026 Mevcut Devir Excel Dosyasını İndir",
-      f,
-      file_name="Ekim_2026_Mevcut_Nobet_Listesi.xlsx",
-  )
