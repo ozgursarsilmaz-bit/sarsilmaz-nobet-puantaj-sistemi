@@ -212,31 +212,60 @@ if uploaded_file is not None:
 def get_prev(p_name, category): return gecmis_istatistik.get(p_name, {}).get(category, 0)
 def get_prev_acil(p_name): return gecmis_acil_istatistik.get(p_name, 0)
 
-# --- İZİNLİ VE SABİT NÖBET GİRİŞ PANELİ ---
+# --- 🌟 YENİ DİNAMİK PERSONEL MAZERET VE SABİT NÖBET GİRİŞ PANELİ 🌟 ---
 st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
-izinler = {}
-sabit_nobetler = {}
+
+if "mazeret_satir_sayisi" not in st.session_state:
+    st.session_state.mazeret_satir_sayisi = 1
+
+def mazeret_satir_ekle():
+    st.session_state.mazeret_satir_sayisi += 1
+
+def mazeret_satir_cikar():
+    if st.session_state.mazeret_satir_sayisi > 1:
+        st.session_state.mazeret_satir_sayisi -= 1
+
+izinler = {p: [] for p in nobetci_personeller}
+sabit_nobetler = {p: [] for p in nobetci_personeller}
 toplam_izin_sayisi = 0
 toplam_sabit_sayisi = 0
 
-baslik_personel, baslik_izin, baslik_sabit = st.columns([1.1, 1.8, 1.8])
-with baslik_personel: st.markdown('<div class="personel-giris-baslik">👤 PERSONEL</div>', unsafe_allow_html=True)
-with baslik_izin: st.markdown('<div class="personel-giris-baslik">🏖️ MAZERET / İZİN GÜNLERİ</div>', unsafe_allow_html=True)
-with baslik_sabit: st.markdown('<div class="personel-giris-baslik">📌 SABİT / ZORUNLU NÖBET GÜNLERİ</div>', unsafe_allow_html=True)
+for m_idx in range(st.session_state.mazeret_satir_sayisi):
+    c1, c2, c3 = st.columns([1.2, 1.8, 1.8])
+    with c1:
+        p_secilen = st.selectbox(
+            f"Personel #{m_idx+1}:",
+            options=["Seçiniz..."] + nobetci_personeller,
+            key=f"m_personel_{m_idx}"
+        )
+    with c2:
+        selected_days = st.multiselect(
+            f"Mazeret / İzin Günleri #{m_idx+1}:",
+            options=gun_secenekleri,
+            default=[],
+            key=f"m_leave_{m_idx}",
+            placeholder="Gün seçin..."
+        )
+    with c3:
+        selected_sabit_days = st.multiselect(
+            f"Sabit Nöbet Günleri #{m_idx+1}:",
+            options=gun_secenekleri,
+            default=[],
+            key=f"m_forced_{m_idx}",
+            placeholder="Gün seçin..."
+        )
 
-for idx, p in enumerate(nobetci_personeller):
-    col_personel, col_izin, col_sabit = st.columns([1.1, 1.8, 1.8])
-    with col_personel: st.markdown(f'<div class="personel-giris-adi" title="{p}">{p}</div>', unsafe_allow_html=True)
-    with col_izin:
-        selected_days = st.multiselect("İzin Günleri", options=gun_secenekleri, default=[], key=f"leave_{p}", label_visibility="collapsed", placeholder="Gün seçin...")
-        izinler[p] = [d - 1 for d in selected_days]
+    if p_secilen != "Seçiniz...":
+        izinler[p_secilen].extend([d - 1 for d in selected_days])
+        sabit_nobetler[p_secilen].extend([d - 1 for d in selected_sabit_days])
         toplam_izin_sayisi += len(selected_days)
-    with col_sabit:
-        selected_sabit_days = st.multiselect("Sabit Nöbet Günleri", options=gun_secenekleri, default=[], key=f"forced_{p}", label_visibility="collapsed", placeholder="Gün seçin...")
-        sabit_nobetler[p] = [d - 1 for d in selected_sabit_days]
         toplam_sabit_sayisi += len(selected_sabit_days)
-    if idx < len(nobetci_personeller) - 1:
-        st.markdown('<hr class="personel-giris-ayirici">', unsafe_allow_html=True)
+
+col_m_btn1, col_m_btn2, _ = st.columns([1.2, 1.2, 3.6])
+with col_m_btn1:
+    st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
+with col_m_btn2:
+    st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -803,7 +832,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         saat_farki = model.NewIntVar(0, 1000, "saat_farki")
         model.Add(saat_farki == max_bu_ay_saat - min_bu_ay_saat)
 
-        # 🌟 DÜZELTİLEN KATEGORİ SÖZLÜĞÜ (IMLA HATASI GİDERİLDİ)
         kategoriler = {
             "Pazartesi": ([0], 500), "Salı": ([1], 500), "Çarşamba": ([2], 500),
             "Perşembe": ([3], 1000), "Cuma": ([4], 1500), "Cumartesi": ([5], 2500), "Pazar": ([6], 2000)
