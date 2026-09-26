@@ -186,13 +186,13 @@ if uploaded_file is not None:
 
                 p_dict = {}
                 for g_idx, g_name in enumerate(gunler_sira):
-                    toplam_col_idx = 3 + (g_idx * 3)  # Önceki ayın Toplam sütunu
+                    toplam_col_idx = 3 + (g_idx * 3)
                     try: val = int(row.iloc[toplam_col_idx])
                     except (ValueError, TypeError, IndexError): val = 0
                     p_dict[g_name] = val
                 gecmis_istatistik[p_name] = p_dict
 
-                # DÜZELTME: Önceki ayın ACİL NÖBET "Toplam" sütunu (İndeks 26 / AA sütunu) devir olarak alınıyor.
+                # Önceki ayın ACİL NÖBET "Toplam" sütunu (İndeks 26 / AA sütunu) devir olarak alınıyor.
                 try: acil_devir_val = int(row.iloc[26])
                 except (ValueError, TypeError, IndexError): acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
@@ -249,7 +249,7 @@ with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_ci
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- SABİT ACİL NÖBET SEÇİM PANELİ ---
-st.markdown('<div class="section-title">🚨 Sabit Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
 if "acil_satir_sayisi" not in st.session_state:
     st.session_state.acil_satir_sayisi = 1
 
@@ -870,7 +870,8 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     if solver.Value(x[(p, d)]) == 1:
                         nobet_dict[p].add(d + 1)
 
-            # ACİL NÖBET DAĞITIM ALGORİTMASI (MANUEL + DİNAMİK OTOMATİK)
+            # ACİL NÖBET DAĞITIM ALGORİTMASI (GÜNCELLENMİŞ AY İÇİ DENGELİ ÖNCELİK)
+            bu_ay_acil_saat = {p: 0 for p in nobetci_personeller}
             kumulatif_acil_saat = {p: get_prev_acil(p) for p in nobetci_personeller}
 
             # 1. Aşama: Manuel Tanımlanan Sabit Acil Nöbetlerin Atanması
@@ -879,17 +880,24 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     if d in nobet_dict[p]:
                         acil_nobet_dict[p].add(d)
                         g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+                        bu_ay_acil_saat[p] += g_saat
                         kumulatif_acil_saat[p] += g_saat
 
-            # 2. Aşama: Manuel Atanmayan Günlerin Adil Saat Dağıtımı ile Tamamlanması
+            # 2. Aşama: Manuel Atanmayan Günlerin AY İÇİ DENGELİ Adil Saat Dağıtımı ile Tamamlanması
             for d in range(1, gun_sayisi + 1):
                 mevcut_acil = [p for p in nobetci_personeller if d in acil_nobet_dict[p]]
                 if not mevcut_acil:
                     gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
                     if gun_nobetcileri:
-                        secilen_acil = min(gun_nobetcileri, key=lambda p: kumulatif_acil_saat[p])
+                        # 1. Öncelik: bu_ay_acil_saat (Mevcut ayda en az acil nöbet tutmuş olan)
+                        # 2. Öncelik: kumulatif_acil_saat (Eşitlik durumunda devri az olan)
+                        secilen_acil = min(
+                            gun_nobetcileri,
+                            key=lambda p: (bu_ay_acil_saat[p], kumulatif_acil_saat[p])
+                        )
                         acil_nobet_dict[secilen_acil].add(d)
                         g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+                        bu_ay_acil_saat[secilen_acil] += g_saat
                         kumulatif_acil_saat[secilen_acil] += g_saat
 
             # TABLO VE EKRAN HAZIRLIKLARI
@@ -952,14 +960,14 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 row_dict[("T.NöbetSaati", "")] = bu_ay_saat
                 row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
 
-                bu_ay_acil_saat = sum(
+                bu_ay_acil_saat_val = sum(
                     calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
                     for d in acil_nobet_dict[p]
                 )
                 acil_devir = get_prev_acil(p)
                 row_dict[("ACİL NÖBET (SAAT)", "Devir")] = acil_devir
-                row_dict[("ACİL NÖBET (SAAT)", "Bu Ay")] = bu_ay_acil_saat
-                row_dict[("ACİL NÖBET (SAAT)", "Toplam")] = acil_devir + bu_ay_acil_saat
+                row_dict[("ACİL NÖBET (SAAT)", "Bu Ay")] = bu_ay_acil_saat_val
+                row_dict[("ACİL NÖBET (SAAT)", "Toplam")] = acil_devir + bu_ay_acil_saat_val
 
                 istatistik_rows.append(row_dict)
 
