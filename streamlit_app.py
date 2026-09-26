@@ -186,13 +186,14 @@ if uploaded_file is not None:
 
                 p_dict = {}
                 for g_idx, g_name in enumerate(gunler_sira):
-                    toplam_col_idx = 3 + (g_idx * 3)
+                    toplam_col_idx = 3 + (g_idx * 3)  # Önceki ayın Toplam sütunu
                     try: val = int(row.iloc[toplam_col_idx])
                     except (ValueError, TypeError, IndexError): val = 0
                     p_dict[g_name] = val
                 gecmis_istatistik[p_name] = p_dict
 
-                try: acil_devir_val = int(row.iloc[25])
+                # DÜZELTME: Önceki ayın ACİL NÖBET "Toplam" sütunu (İndeks 26 / AA sütunu) devir olarak alınıyor.
+                try: acil_devir_val = int(row.iloc[26])
                 except (ValueError, TypeError, IndexError): acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
 
@@ -248,7 +249,7 @@ with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_ci
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- SABİT ACİL NÖBET SEÇİM PANELİ ---
-st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🚨 Sabit Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
 if "acil_satir_sayisi" not in st.session_state:
     st.session_state.acil_satir_sayisi = 1
 
@@ -882,7 +883,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
             # 2. Aşama: Manuel Atanmayan Günlerin Adil Saat Dağıtımı ile Tamamlanması
             for d in range(1, gun_sayisi + 1):
-                # Bu gün zaten bir acil nöbetçi var mı kontrol et
                 mevcut_acil = [p for p in nobetci_personeller if d in acil_nobet_dict[p]]
                 if not mevcut_acil:
                     gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
