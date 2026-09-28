@@ -171,6 +171,7 @@ uploaded_file = st.sidebar.file_uploader("Önceki Ayın Excel Dosyası:", type=[
 
 gecmis_istatistik = {}
 gecmis_acil_istatistik = {}
+otomatik_son_gun_nobetcileri = []
 
 if uploaded_file is not None:
     try:
@@ -192,14 +193,34 @@ if uploaded_file is not None:
                     p_dict[g_name] = val
                 gecmis_istatistik[p_name] = p_dict
 
-                # Önceki ayın ACİL NÖBET "Toplam" sütunu (İndeks 26 / AA sütunu) devir olarak alınıyor.
                 try: acil_devir_val = int(row.iloc[26])
                 except (ValueError, TypeError, IndexError): acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
 
+        # OTOMATİK SON GÜN NÖBETÇİLERİNİ TESPİT ET (Aylık Görev Listesi veya Puantaj Tablosundan)
+        if "Aylık Görev Listesi" in xls.sheet_names:
+            df_goreg = pd.read_excel(xls, sheet_name="Aylık Görev Listesi", skiprows=2)
+            if not df_goreg.empty:
+                last_row = df_goreg.iloc[-1]
+                for col_name in ["PCR", "Mikro", "Kültür"]:
+                    if col_name in df_goreg.columns and pd.notna(last_row[col_name]):
+                        names = str(last_row[col_name]).split(",")
+                        for n in names:
+                            clean_n = n.replace("(Acil)", "").strip().upper()
+                            if clean_n in nobetci_personeller:
+                                otomatik_son_gun_nobetcileri.append(clean_n)
+
         st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
     except Exception as e:
         st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+
+# HİBRİT SON GÜN NÖBETÇİ SEÇİM PANELİ
+gecmis_ay_son_gun_nobetcileri = st.sidebar.multiselect(
+    "🌙 Geçmiş Ay Son Günü Nöbet Tutan Personel(ler):",
+    options=nobetci_personeller,
+    default=list(set(otomatik_son_gun_nobetcileri)),
+    help="Önceki ayın son günü nöbet tutup ödemesini peşin alan personeller. Bu ayın 1. gününe Nİ yazılır ve 8 saat mahsuplaşılır."
+)
 
 def get_prev(p_name, category):
     p_norm = tr_norm(p_name)
@@ -342,6 +363,7 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
             else: toplam_saat += 8
     return toplam_saat
 
+# GÜNCELLENMİŞ PUANTAJ METRİKLERİ HESAPLAMA (Nİ MAHSUPLAŞMASI EKLENDİ)
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
@@ -352,9 +374,13 @@ def calculate_personel_puantaj_metrikleri(
     norm_normal = 0
     risk_gece = 0
     risk_normal = 0
+    ni_sayisi = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
+
+        if val == "Nİ":
+            ni_sayisi += 1
 
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
@@ -381,6 +407,18 @@ def calculate_personel_puantaj_metrikleri(
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
 
+    # Nİ MAHSUPLAŞMA KURALI (8 Saat / Nİ)
+    # Önce Normal Nöbet - Artırımsız (Normal)'den düşülür, kalırsa Normal Nöbet - Artırımlı (Gece)'den düşülür.
+    toplam_ni_dussecek_saat = ni_sayisi * 8
+
+    if toplam_ni_dussecek_saat > 0:
+        dussulecek_normal = min(norm_normal, toplam_ni_dussecek_saat)
+        norm_normal -= dussulecek_normal
+        kalan_eksik = toplam_ni_dussecek_saat - dussulecek_normal
+
+        if kalan_eksik > 0:
+            norm_gece = max(0, norm_gece - kalan_eksik)
+
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
     return {
@@ -397,7 +435,7 @@ def calculate_personel_puantaj_metrikleri(
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
     yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
-    gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+    gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
 ):
     wb = openpyxl.Workbook()
 
@@ -670,7 +708,14 @@ def generate_3_tab_excel(
                     cell.value = 8
                     cell.font = font_body
             else:
-                if day in p_shifts:
+                # GÜN 1 ÖZEL Nİ KONTROLÜ (Geçmiş Ay Son Günü Nöbetçi)
+                if day == 1 and p in gecmis_ay_son_gun_nobetcileri:
+                    if day in off_days:
+                        cell.value = "T"
+                    else:
+                        cell.value = "Nİ"
+                        cell.font = font_ni
+                elif day in p_shifts:
                     cell.value = 24
                     cell.font = font_24
                     if day in p_acils:
@@ -782,6 +827,11 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         for p in nobetci_personeller:
             for d in sabit_nobetler[p]: model.Add(x[(p, d)] == 1)
 
+        # GEÇMİŞ AY SON GÜNÜ NÖBET TUTAN KİŞİ AYIN 1. GÜNÜ NÖBET TUTAMAZ (Nİ YASAĞI)
+        for p in gecmis_ay_son_gun_nobetcileri:
+            if p in nobetci_personeller:
+                model.Add(x[(p, 0)] == 0)
+
         # MİNİMUM DİNLENME SÜRESİ
         for p in nobetci_personeller:
             p_dinlenme = 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
@@ -870,11 +920,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     if solver.Value(x[(p, d)]) == 1:
                         nobet_dict[p].add(d + 1)
 
-            # ACİL NÖBET DAĞITIM ALGORİTMASI (GÜNCELLENMİŞ AY İÇİ DENGELİ ÖNCELİK)
+            # ACİL NÖBET DAĞITIM ALGORİTMASI
             bu_ay_acil_saat = {p: 0 for p in nobetci_personeller}
             kumulatif_acil_saat = {p: get_prev_acil(p) for p in nobetci_personeller}
 
-            # 1. Aşama: Manuel Tanımlanan Sabit Acil Nöbetlerin Atanması
             for p, g_list in sabit_acil_nobetler.items():
                 for d in g_list:
                     if d in nobet_dict[p]:
@@ -883,14 +932,11 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                         bu_ay_acil_saat[p] += g_saat
                         kumulatif_acil_saat[p] += g_saat
 
-            # 2. Aşama: Manuel Atanmayan Günlerin AY İÇİ DENGELİ Adil Saat Dağıtımı ile Tamamlanması
             for d in range(1, gun_sayisi + 1):
                 mevcut_acil = [p for p in nobetci_personeller if d in acil_nobet_dict[p]]
                 if not mevcut_acil:
                     gun_nobetcileri = [p for p in nobetci_personeller if d in nobet_dict[p]]
                     if gun_nobetcileri:
-                        # 1. Öncelik: bu_ay_acil_saat (Mevcut ayda en az acil nöbet tutmuş olan)
-                        # 2. Öncelik: kumulatif_acil_saat (Eşitlik durumunda devri az olan)
                         secilen_acil = min(
                             gun_nobetcileri,
                             key=lambda p: (bu_ay_acil_saat[p], kumulatif_acil_saat[p])
@@ -987,7 +1033,10 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                         elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
                         else: p_row[str(d)] = "8"
                     else:
-                        if d in nobet_dict[p]:
+                        if d == 1 and p in gecmis_ay_son_gun_nobetcileri:
+                            if day_is_off: p_row[str(d)] = "T"
+                            else: p_row[str(d)] = "Nİ"
+                        elif d in nobet_dict[p]:
                             p_row[str(d)] = "24"
                         elif (d - 1) in nobet_dict[p]:
                             if day_is_off: p_row[str(d)] = "T"
@@ -1014,7 +1063,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
             excel_bytes = generate_3_tab_excel(
                 yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
-                gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+                gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
             )
 
             b64 = base64.b64encode(excel_bytes.getvalue()).decode()
