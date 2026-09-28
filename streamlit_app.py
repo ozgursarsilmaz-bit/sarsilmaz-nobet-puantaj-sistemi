@@ -370,11 +370,13 @@ def calculate_personel_puantaj_metrikleri(
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
-    norm_gece = 0
-    norm_normal = 0
-    risk_gece = 0
-    risk_normal = 0
     ni_sayisi = 0
+
+    # Her günün nöbet detaylarını toplayalım
+    raw_norm_gece = 0
+    raw_norm_normal = 0
+    raw_risk_gece = 0
+    raw_risk_normal = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
@@ -401,14 +403,34 @@ def calculate_personel_puantaj_metrikleri(
             gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
-                risk_gece += g_saat
-                risk_normal += gunduz_saat
+                raw_risk_gece += g_saat
+                raw_risk_normal += gunduz_saat
             else:
-                norm_gece += g_saat
-                norm_normal += gunduz_saat
+                raw_norm_gece += g_saat
+                raw_norm_normal += gunduz_saat
 
-    # Nİ MAHSUPLAŞMA KURALI (8 Saat / Nİ)
-    # Önce Normal Nöbet - Artırımsız (Normal)'den düşülür, kalırsa Normal Nöbet - Artırımlı (Gece)'den düşülür.
+    fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+
+    # 1. Aşama: Fazla Nöbet Saatinin Normal ve Riskli Kalemlere Dağıtılması
+    # Öncelik personelin ay içinde tuttuğu nöbet türüne göredir.
+    norm_gece = raw_norm_gece
+    norm_normal = raw_norm_normal
+    risk_gece = raw_risk_gece
+    risk_normal = raw_risk_normal
+
+    # Eğer toplam nöbet saatleri fazla nöbetten farklıysa oranlama/sınırlama yapılır
+    toplam_raw_nobet = raw_norm_gece + raw_norm_normal + raw_risk_gece + raw_risk_normal
+    
+    if toplam_raw_nobet > 0 and fazla_nobet < toplam_raw_nobet:
+        # Eğer fazla nöbet saati toplam tutulan nöbet saatinden az ise (örneğin eksik mesai/Nİ varsa)
+        # Nöbet türü ağırlıklarına göre fazla nöbete yansıtılır:
+        oran = fazla_nobet / toplam_raw_nobet
+        norm_gece = round(raw_norm_gece * oran)
+        norm_normal = round(raw_norm_normal * oran)
+        risk_gece = round(raw_risk_gece * oran)
+        risk_normal = fazla_nobet - (norm_gece + norm_normal + risk_gece)
+
+    # 2. Aşama: Nİ Mahsuplaşması (KURAL: Önce Normal-Normal, Yetmezse Normal-Gece)
     toplam_ni_dussecek_saat = ni_sayisi * 8
 
     if toplam_ni_dussecek_saat > 0:
@@ -418,8 +440,6 @@ def calculate_personel_puantaj_metrikleri(
 
         if kalan_eksik > 0:
             norm_gece = max(0, norm_gece - kalan_eksik)
-
-    fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
     return {
         "Toplam Çalışma Saati": toplam_calisma,
