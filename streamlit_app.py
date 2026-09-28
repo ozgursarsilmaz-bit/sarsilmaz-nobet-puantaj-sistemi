@@ -443,8 +443,8 @@ def generate_3_tab_excel(
     font_header = Font(name="Calibri", size=10, bold=True, color="000000")
     font_body = Font(name="Calibri", size=9, bold=False, color="000000")
     font_bold = Font(name="Calibri", size=9, bold=True, color="000000")
-    font_ni = Font(name="Calibri", size=9, bold=True, color="C00000")
-    font_24 = Font(name="Calibri", size=9, bold=True, color="002060")
+    font_ni = Font(name="Calibri", size=9, bold=True, color="000000")
+    font_24 = Font(name="Calibri", size=9, bold=True, color="000000")
 
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
