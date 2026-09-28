@@ -337,7 +337,7 @@ def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun
     dt = datetime.date(yil, ay, d)
     w = dt.weekday()
 
-    # RESMİ TATİL GÜNÜ ÖZEL KURALI: Ertesi gün mesai (8/5 vb.) varsa 16 saat, yoksa (tatil/boş) 24 saat
+    # RESMİ TATİL GÜNÜ ÖZEL KURALI
     if d in resmi_tatil_gunleri:
         if d < gun_sayisi:
             next_day_val = str(p_row_dict.get(str(d + 1), "")).strip() if p_row_dict else ""
@@ -395,16 +395,23 @@ def calculate_personel_puantaj_metrikleri(
             is_risk = (d in acil_days_set)
             n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict)
 
-            if n_saat in [16, 24]:
+            # GECE / NORMAL SAAT AYRIŞIM MANTIĞI
+            if d in resmi_tatil_gunleri and n_saat == 16:
+                # Ertesi gün mesai olan resmi tatildeki 16 saatlik nöbet: 8 saat gece + 0 saat normal
+                g_saat = 8
+                gunduz_saat = 0
+            elif n_saat in [16, 24]:
                 g_saat = 12
+                gunduz_saat = max(0, n_saat - g_saat)
             elif n_saat in [8, 11]:
                 g_saat = 8
+                gunduz_saat = max(0, n_saat - g_saat)
             elif n_saat == 19:
                 g_saat = 12
+                gunduz_saat = max(0, n_saat - g_saat)
             else:
                 g_saat = min(12, n_saat)
-
-            gunduz_saat = max(0, n_saat - g_saat)
+                gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
                 risk_gece += g_saat
@@ -442,7 +449,7 @@ def calculate_personel_puantaj_metrikleri(
     return res_dict
 
 
-# --- 3 SEKMELİ EXCEL OLUŞTURUCU (GÖRSEL TASARIM GÜNCELLEMESİ) ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
     yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
     gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
@@ -459,10 +466,9 @@ def generate_3_tab_excel(
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
     
-    # GÖRSELDEKİ ÖZEL RENK TANIMLARI
-    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")  # Gri Tatil/Hafta Sonu
-    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") # Canlı Sarı Acil Nöbet
-    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")         # Beyaz Arka Plan
+    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")
+    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     thin_side = Side(style="thin", color="000000")
     border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
@@ -589,7 +595,6 @@ def generate_3_tab_excel(
         bu_ay_gunler = {g: 0 for g in gunler_listesi}
         bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
 
-        # Önceden geçici p_row_dict hazırlanarak resmi tatil ertesi gün kontrolü doğru yapılır
         p_row_dict_temp = {}
         for d in range(1, gun_sayisi + 1):
             if d in nobet_dict.get(p, set()):
@@ -645,7 +650,7 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU (GÖRSELDEKİ DÜZENLEME)
+    # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
@@ -670,7 +675,6 @@ def generate_3_tab_excel(
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
-        # HAFTA SONLARI BAŞLIKTAN İTİBAREN GRİ DOLGU
         cell.fill = fill_grey_weekend if day in off_days else fill_white
 
     ek_basliklar = [
@@ -721,7 +725,6 @@ def generate_3_tab_excel(
             cell.border = border_cell
             cell.alignment = align_center
 
-            # VARSAYILAN ARKA PLAN
             cell.fill = fill_grey_weekend if day in off_days else fill_white
 
             if is_muaf:
@@ -741,7 +744,6 @@ def generate_3_tab_excel(
                 elif day in p_shifts:
                     cell.value = 24
                     cell.font = font_24
-                    # SADECE ACİL/RİSKLİ NÖBETTE CANLI SARI DOLGU
                     if day in p_acils:
                         cell.fill = fill_bright_yellow
                 elif (day - 1) in p_shifts:
@@ -1010,7 +1012,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 bu_ay_gunler = {g: 0 for g in gunler_listesi}
                 bu_ay_toplam_nobet = len(nobet_dict[p])
 
-                # Geçici p_row_dict
                 p_row_dict_temp = {}
                 for d in range(1, gun_sayisi + 1):
                     if d in nobet_dict[p]:
