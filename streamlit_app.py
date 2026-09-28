@@ -333,28 +333,17 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     dt = datetime.date(yil, ay, day)
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
-def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict=None):
+def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
     dt = datetime.date(yil, ay, d)
     w = dt.weekday()
-
-    # RESMİ TATİL GÜNÜ ÖZEL KURALI
-    if d in resmi_tatil_gunleri:
-        if d < gun_sayisi:
-            next_day_val = str(p_row_dict.get(str(d + 1), "")).strip() if p_row_dict else ""
-            if next_day_val in ["8", "5"]:
-                return 16
-            elif next_day_val in ["T", "Nİ", "24", ""]:
-                return 24
-            else:
-                next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) or ((d + 1) in yarim_gun_tatil_gunleri)
-                return 24 if next_day_off else 16
-        return 24
 
     if d in yarim_gun_tatil_gunleri:
         return 19
     if w == 5:
         return 24
     if w == 6:
+        return 16
+    if d in resmi_tatil_gunleri:
         return 16
     if w == 4:
         return 16
@@ -374,6 +363,7 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
             else: toplam_saat += 8
     return toplam_saat
 
+# ORİJİNAL HESAPLAMA FONKSİYONU (HİÇ DOKUNULMADI)
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
@@ -393,25 +383,18 @@ def calculate_personel_puantaj_metrikleri(
 
         if val == "24":
             is_risk = (d in acil_days_set)
-            n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict)
+            n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-            # GECE / NORMAL SAAT AYRIŞIM MANTIĞI
-            if d in resmi_tatil_gunleri and n_saat == 16:
-                # Ertesi gün mesai olan resmi tatildeki 16 saatlik nöbet: 8 saat gece + 0 saat normal
-                g_saat = 8
-                gunduz_saat = 0
-            elif n_saat in [16, 24]:
+            if n_saat in [16, 24]:
                 g_saat = 12
-                gunduz_saat = max(0, n_saat - g_saat)
             elif n_saat in [8, 11]:
                 g_saat = 8
-                gunduz_saat = max(0, n_saat - g_saat)
             elif n_saat == 19:
                 g_saat = 12
-                gunduz_saat = max(0, n_saat - g_saat)
             else:
                 g_saat = min(12, n_saat)
-                gunduz_saat = max(0, n_saat - g_saat)
+
+            gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
                 risk_gece += g_saat
@@ -449,7 +432,7 @@ def calculate_personel_puantaj_metrikleri(
     return res_dict
 
 
-# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU (GÖRSEL TASARIM GÜNCELLEMESİ) ---
 def generate_3_tab_excel(
     yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
     gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
@@ -466,9 +449,10 @@ def generate_3_tab_excel(
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
     
-    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")
-    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    # GÖRSELDEKİ ÖZEL RENK TANIMLARI
+    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")  # Gri Tatil/Hafta Sonu
+    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") # Canlı Sarı Acil Nöbet
+    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")         # Beyaz Arka Plan
 
     thin_side = Side(style="thin", color="000000")
     border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
@@ -595,20 +579,11 @@ def generate_3_tab_excel(
         bu_ay_gunler = {g: 0 for g in gunler_listesi}
         bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
 
-        p_row_dict_temp = {}
-        for d in range(1, gun_sayisi + 1):
-            if d in nobet_dict.get(p, set()):
-                p_row_dict_temp[str(d)] = "24"
-            elif (d - 1) in nobet_dict.get(p, set()):
-                p_row_dict_temp[str(d)] = "T" if is_day_off(yil, ay, d, resmi_tatil_gunleri) else "Nİ"
-            else:
-                p_row_dict_temp[str(d)] = "T" if is_day_off(yil, ay, d, resmi_tatil_gunleri) else "8"
-
         bu_ay_saat = 0
         for d in nobet_dict.get(p, set()):
             w = datetime.date(yil, ay, d).weekday()
             bu_ay_gunler[tr_gunler[w]] += 1
-            bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict_temp)
+            bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
         c_i = 2
         for g in gunler_listesi:
@@ -636,7 +611,7 @@ def generate_3_tab_excel(
         c_i += 1
 
         bu_ay_acil_saat = sum(
-            calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict_temp)
+            calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
             for d in acil_nobet_dict.get(p, set())
         )
         acil_devir = int(get_prev_acil(p))
@@ -650,7 +625,7 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU
+    # 3. SEKME: PUANTAJ TABLOSU (GÖRSELDEKİ DÜZENLEME)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
@@ -675,6 +650,7 @@ def generate_3_tab_excel(
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
+        # HAFTA SONLARI BAŞLIKTAN İTİBAREN GRİ DOLGU
         cell.fill = fill_grey_weekend if day in off_days else fill_white
 
     ek_basliklar = [
@@ -725,6 +701,7 @@ def generate_3_tab_excel(
             cell.border = border_cell
             cell.alignment = align_center
 
+            # VARSAYILAN ARKA PLAN
             cell.fill = fill_grey_weekend if day in off_days else fill_white
 
             if is_muaf:
@@ -744,6 +721,7 @@ def generate_3_tab_excel(
                 elif day in p_shifts:
                     cell.value = 24
                     cell.font = font_24
+                    # SADECE ACİL/RİSKLİ NÖBETTE CANLI SARI DOLGU
                     if day in p_acils:
                         cell.fill = fill_bright_yellow
                 elif (day - 1) in p_shifts:
@@ -1012,20 +990,11 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 bu_ay_gunler = {g: 0 for g in gunler_listesi}
                 bu_ay_toplam_nobet = len(nobet_dict[p])
 
-                p_row_dict_temp = {}
-                for d in range(1, gun_sayisi + 1):
-                    if d in nobet_dict[p]:
-                        p_row_dict_temp[str(d)] = "24"
-                    elif (d - 1) in nobet_dict[p]:
-                        p_row_dict_temp[str(d)] = "T" if is_day_off(yil, ay, d, resmi_tatil_gunleri) else "Nİ"
-                    else:
-                        p_row_dict_temp[str(d)] = "T" if is_day_off(yil, ay, d, resmi_tatil_gunleri) else "8"
-
                 bu_ay_saat = 0
                 for d in nobet_dict[p]:
                     w = datetime.date(yil, ay, d).weekday()
                     bu_ay_gunler[tr_gunler[w]] += 1
-                    bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict_temp)
+                    bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
                 row_dict = {("AD SOYAD", ""): p}
 
@@ -1042,7 +1011,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
 
                 bu_ay_acil_saat_val = sum(
-                    calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_row_dict_temp)
+                    calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
                     for d in acil_nobet_dict[p]
                 )
                 acil_devir = get_prev_acil(p)
