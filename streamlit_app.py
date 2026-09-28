@@ -197,7 +197,7 @@ if uploaded_file is not None:
                 except (ValueError, TypeError, IndexError): acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
 
-        # OTOMATİK SON GÜN NÖBETÇİLERİNİ TESPİT ET (Aylık Görev Listesi veya Puantaj Tablosundan)
+        # OTOMATİK SON GÜN NÖBETÇİLERİNİ TESPİT ET (Aylık Görev Listesinden)
         if "Aylık Görev Listesi" in xls.sheet_names:
             df_goreg = pd.read_excel(xls, sheet_name="Aylık Görev Listesi", skiprows=2)
             if not df_goreg.empty:
@@ -363,26 +363,20 @@ def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yari
             else: toplam_saat += 8
     return toplam_saat
 
-# GÜNCELLENMİŞ PUANTAJ METRİKLERİ HESAPLAMA (Nİ MAHSUPLAŞMASI EKLENDİ)
+# ORİJİNAL HESAPLAMA FONKSİYONU (HİÇ DOKUNULMADI)
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
     aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
     
     toplam_calisma = 0
-    ni_sayisi = 0
-
-    # Her günün nöbet detaylarını toplayalım
-    raw_norm_gece = 0
-    raw_norm_normal = 0
-    raw_risk_gece = 0
-    raw_risk_normal = 0
+    norm_gece = 0
+    norm_normal = 0
+    risk_gece = 0
+    risk_normal = 0
 
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
-
-        if val == "Nİ":
-            ni_sayisi += 1
 
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
@@ -403,45 +397,15 @@ def calculate_personel_puantaj_metrikleri(
             gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
-                raw_risk_gece += g_saat
-                raw_risk_normal += gunduz_saat
+                risk_gece += g_saat
+                risk_normal += gunduz_saat
             else:
-                raw_norm_gece += g_saat
-                raw_norm_normal += gunduz_saat
+                norm_gece += g_saat
+                norm_normal += gunduz_saat
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
-    # 1. Aşama: Fazla Nöbet Saatinin Normal ve Riskli Kalemlere Dağıtılması
-    # Öncelik personelin ay içinde tuttuğu nöbet türüne göredir.
-    norm_gece = raw_norm_gece
-    norm_normal = raw_norm_normal
-    risk_gece = raw_risk_gece
-    risk_normal = raw_risk_normal
-
-    # Eğer toplam nöbet saatleri fazla nöbetten farklıysa oranlama/sınırlama yapılır
-    toplam_raw_nobet = raw_norm_gece + raw_norm_normal + raw_risk_gece + raw_risk_normal
-    
-    if toplam_raw_nobet > 0 and fazla_nobet < toplam_raw_nobet:
-        # Eğer fazla nöbet saati toplam tutulan nöbet saatinden az ise (örneğin eksik mesai/Nİ varsa)
-        # Nöbet türü ağırlıklarına göre fazla nöbete yansıtılır:
-        oran = fazla_nobet / toplam_raw_nobet
-        norm_gece = round(raw_norm_gece * oran)
-        norm_normal = round(raw_norm_normal * oran)
-        risk_gece = round(raw_risk_gece * oran)
-        risk_normal = fazla_nobet - (norm_gece + norm_normal + risk_gece)
-
-    # 2. Aşama: Nİ Mahsuplaşması (KURAL: Önce Normal-Normal, Yetmezse Normal-Gece)
-    toplam_ni_dussecek_saat = ni_sayisi * 8
-
-    if toplam_ni_dussecek_saat > 0:
-        dussulecek_normal = min(norm_normal, toplam_ni_dussecek_saat)
-        norm_normal -= dussulecek_normal
-        kalan_eksik = toplam_ni_dussecek_saat - dussulecek_normal
-
-        if kalan_eksik > 0:
-            norm_gece = max(0, norm_gece - kalan_eksik)
-
-    return {
+    res_dict = {
         "Toplam Çalışma Saati": toplam_calisma,
         "Aylık Çalışma Saati": aylik_hedef_saat,
         "Fazla Nöbet Saati": fazla_nobet,
@@ -450,6 +414,22 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Gece": risk_gece,
         "Riskli_Normal": risk_normal,
     }
+
+    # --- TAMAMEN AYRI VE BAĞIMSIZ Nİ MAHSUPLAŞMA KODU ---
+    # Sadece ve sadece Ayın 1. Gününün değeri "Nİ" ise devreye girer
+    if str(p_row_dict.get("1", "")).strip() == "Nİ":
+        dusum_miktari = 8
+        
+        # 1. Aşama: Normal Nöbet - Artırımsız (Normal) kaleminden 8 saat düşülür
+        if res_dict["Normal_Normal"] >= dusum_miktari:
+            res_dict["Normal_Normal"] -= dusum_miktari
+        else:
+            # Yeterli saat yoksa Normal_Normal sıfırlanır, kalan eksik Normal_Gece'den düşülür
+            kalan_eksik = dusum_miktari - res_dict["Normal_Normal"]
+            res_dict["Normal_Normal"] = 0
+            res_dict["Normal_Gece"] = max(0, res_dict["Normal_Gece"] - kalan_eksik)
+
+    return res_dict
 
 
 # --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
