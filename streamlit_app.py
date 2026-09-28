@@ -432,7 +432,7 @@ def calculate_personel_puantaj_metrikleri(
     return res_dict
 
 
-# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU (GÖRSEL TASARIM GÜNCELLEMESİ) ---
 def generate_3_tab_excel(
     yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
     gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
@@ -448,10 +448,13 @@ def generate_3_tab_excel(
 
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
-    fill_grey = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-    fill_yellow_acil = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    
+    # GÖRSELDEKİ ÖZEL RENK TANIMLARI
+    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")  # Gri Tatil/Hafta Sonu
+    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") # Canlı Sarı Acil Nöbet
+    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")         # Beyaz Arka Plan
 
-    thin_side = Side(style="thin", color="A6A6A6")
+    thin_side = Side(style="thin", color="000000")
     border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
     align_center = Alignment(horizontal="center", vertical="center")
@@ -498,7 +501,7 @@ def generate_3_tab_excel(
             c.font = font_body
             c.border = border_cell
             c.alignment = align_center if c in [c1, c2] else align_left
-            if is_day_off(yil, ay, d, resmi_tatil_gunleri): c.fill = fill_grey
+            if is_day_off(yil, ay, d, resmi_tatil_gunleri): c.fill = fill_grey_weekend
 
     ws1.column_dimensions["A"].width = 13
     ws1.column_dimensions["B"].width = 13
@@ -622,18 +625,18 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU
+    # 3. SEKME: PUANTAJ TABLOSU (GÖRSELDEKİ DÜZENLEME)
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
 
     ws3.row_dimensions[5].height = 110
 
-    ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_green_bg
+    ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_white
     ws3.cell(row=5, column=1).font = font_header
     ws3.cell(row=5, column=1).alignment = align_left
     ws3.cell(row=5, column=1).border = border_cell
 
-    ws3.cell(row=5, column=2, value="Birim").fill = fill_green_bg
+    ws3.cell(row=5, column=2, value="Birim").fill = fill_white
     ws3.cell(row=5, column=2).font = font_header
     ws3.cell(row=5, column=2).alignment = align_center
     ws3.cell(row=5, column=2).border = border_cell
@@ -647,7 +650,8 @@ def generate_3_tab_excel(
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
-        cell.fill = fill_grey if day in off_days else fill_header
+        # HAFTA SONLARI BAŞLIKTAN İTİBAREN GRİ DOLGU
+        cell.fill = fill_grey_weekend if day in off_days else fill_white
 
     ek_basliklar = [
         "Toplam çalışma saati",
@@ -676,13 +680,13 @@ def generate_3_tab_excel(
         is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
 
         c_name = ws3.cell(row=r, column=1, value=p)
-        c_name.fill = fill_green_bg
+        c_name.fill = fill_white
         c_name.font = font_body
         c_name.alignment = align_left
         c_name.border = border_cell
 
         c_unit = ws3.cell(row=r, column=2, value=p_birim)
-        c_unit.fill = fill_green_bg
+        c_unit.fill = fill_white
         c_unit.font = font_body
         c_unit.alignment = align_center
         c_unit.border = border_cell
@@ -697,7 +701,8 @@ def generate_3_tab_excel(
             cell.border = border_cell
             cell.alignment = align_center
 
-            if day in off_days: cell.fill = fill_grey
+            # VARSAYILAN ARKA PLAN
+            cell.fill = fill_grey_weekend if day in off_days else fill_white
 
             if is_muaf:
                 if day in off_days: cell.value = "T"
@@ -708,18 +713,17 @@ def generate_3_tab_excel(
                     cell.value = 8
                     cell.font = font_body
             else:
-                # GÜN 1 ÖZEL Nİ KONTROLÜ (Geçmiş Ay Son Günü Nöbetçi)
                 if day == 1 and p in gecmis_ay_son_gun_nobetcileri:
-                    if day in off_days:
-                        cell.value = "T"
+                    if day in off_days: cell.value = "T"
                     else:
                         cell.value = "Nİ"
                         cell.font = font_ni
                 elif day in p_shifts:
                     cell.value = 24
                     cell.font = font_24
+                    # SADECE ACİL/RİSKLİ NÖBETTE CANLI SARI DOLGU
                     if day in p_acils:
-                        cell.fill = fill_yellow_acil
+                        cell.fill = fill_bright_yellow
                 elif (day - 1) in p_shifts:
                     if is_day_off(yil, ay, day, resmi_tatil_gunleri): cell.value = "T"
                     else:
