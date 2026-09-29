@@ -271,7 +271,6 @@ if uploaded_file is not None:
                     continue
 
                 p_dict = {}
-                # Birim sütunu eklendiği için indeks kayması kontrol edilir
                 offset = 1 if "Birim" in str(df_gecmis.iloc[0]).strip() or len(df_gecmis.columns) > 28 else 0
                 for g_idx, g_name in enumerate(gunler_sira):
                     toplam_col_idx = (3 + offset) + (g_idx * 3)
@@ -1238,7 +1237,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             "Pazar": ([6], 2000),
         }
 
-        # --- BİRİM BAZLI ADALET HESAPLAMA (SAAT ADALETİ MUTLAK 1. ÖNCELİK) ---
+        # --- BİRİM BAZLI ADALET HESAPLAMA (MUTLAK SAAT ADALETİ 1. ÖNCELİK) ---
         birimler_listesi = (
             ["PCR", "Mikro", "Kültür"]
             if birim_secimi == "Tüm Laboratuvar (Birleşik)"
@@ -1293,12 +1292,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 model.Add(fark == max_kat - min_kat)
                 kategori_farklari.append(agirlik * fark)
 
-        # MUTLAK SAAT EŞİTLİĞİ BASTIRMASI (10 MİLYON KATSAYISI)
-        model.Minimize(
-            10000000 * sum(saat_farklari)
-            + sum(kategori_farklari)
-            + 100 * sum(yigilma_farklari)
-        )
         # --- ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI (SOFT COST) ---
         yigilma_farklari = []
         yariyil = gun_sayisi // 2
@@ -1309,8 +1302,9 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             model.AddAbsEquality(diff, n1 - n2)
             yigilma_farklari.append(diff)
 
+        # MUTLAK SAAT EŞİTLİĞİ BASTIRMASI (10 MİLYON KATSAYISI)
         model.Minimize(
-            100000 * sum(saat_farklari)
+            10000000 * sum(saat_farklari)
             + sum(kategori_farklari)
             + 100 * sum(yigilma_farklari)
         )
