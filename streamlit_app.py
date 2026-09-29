@@ -271,8 +271,10 @@ if uploaded_file is not None:
                     continue
 
                 p_dict = {}
+                # Birim sütunu eklendiği için indeks kayması kontrol edilir
+                offset = 1 if "Birim" in str(df_gecmis.iloc[0]).strip() or len(df_gecmis.columns) > 28 else 0
                 for g_idx, g_name in enumerate(gunler_sira):
-                    toplam_col_idx = 3 + (g_idx * 3)
+                    toplam_col_idx = (3 + offset) + (g_idx * 3)
                     try:
                         val = int(row.iloc[toplam_col_idx])
                     except (ValueError, TypeError, IndexError):
@@ -281,7 +283,8 @@ if uploaded_file is not None:
                 gecmis_istatistik[p_name] = p_dict
 
                 try:
-                    acil_devir_val = int(row.iloc[26])
+                    acil_col_idx = 27 if offset == 1 else 26
+                    acil_devir_val = int(row.iloc[acil_col_idx])
                 except (ValueError, TypeError, IndexError):
                     acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
@@ -744,7 +747,7 @@ def generate_3_tab_excel(
     ws1.column_dimensions["D"].width = 25
     ws1.column_dimensions["E"].width = 25
 
-    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ
+    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ (BİRİM SÜTUNU EKLENDİ)
     ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
     ws2.views.sheetView[0].showGridLines = True
 
@@ -765,7 +768,14 @@ def generate_3_tab_excel(
     cell_a.alignment = align_center
     cell_a.border = border_cell
 
-    col_counter = 2
+    ws2.merge_cells("B1:B2")
+    cell_b = ws2.cell(row=1, column=2, value="Birim")
+    cell_b.font = font_header
+    cell_b.fill = fill_header
+    cell_b.alignment = align_center
+    cell_b.border = border_cell
+
+    col_counter = 3
     for g in gunler_listesi:
         ws2.merge_cells(
             start_row=1,
@@ -835,9 +845,15 @@ def generate_3_tab_excel(
             ws2.cell(row=r_idx, column=c_idx).border = border_cell
 
     for p_idx, p in enumerate(nobetci_personeller, 3):
+        p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
+
         ws2.cell(row=p_idx, column=1, value=p).alignment = align_left
         ws2.cell(row=p_idx, column=1).font = font_body
         ws2.cell(row=p_idx, column=1).border = border_cell
+
+        ws2.cell(row=p_idx, column=2, value=p_birim).alignment = align_center
+        ws2.cell(row=p_idx, column=2).font = font_body
+        ws2.cell(row=p_idx, column=2).border = border_cell
 
         bu_ay_gunler = {g: 0 for g in gunler_listesi}
         bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
@@ -850,7 +866,7 @@ def generate_3_tab_excel(
                 yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
             )
 
-        c_i = 2
+        c_i = 3
         for g in gunler_listesi:
             devir = int(get_prev(p, g))
             bu_ay = int(bu_ay_gunler[g])
@@ -898,6 +914,7 @@ def generate_3_tab_excel(
             cell.border = border_cell
 
     ws2.column_dimensions["A"].width = 25
+    ws2.column_dimensions["B"].width = 12
 
     # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
@@ -1211,21 +1228,6 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             for d in range(1, gun_sayisi + 1)
         ]
 
-        max_bu_ay_saat = model.NewIntVar(0, 1000, "max_bu_ay_saat")
-        min_bu_ay_saat = model.NewIntVar(0, 1000, "min_bu_ay_saat")
-
-        for p in nobetci_personeller:
-            bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
-            model.Add(
-                bu_ay_saat
-                == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi))
-            )
-            model.Add(bu_ay_saat <= max_bu_ay_saat)
-            model.Add(bu_ay_saat >= min_bu_ay_saat)
-
-        saat_farki = model.NewIntVar(0, 1000, "saat_farki")
-        model.Add(saat_farki == max_bu_ay_saat - min_bu_ay_saat)
-
         kategoriler = {
             "Pazartesi": ([0], 500),
             "Salı": ([1], 500),
@@ -1236,21 +1238,60 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             "Pazar": ([6], 2000),
         }
 
+        # --- BİRİM BAZLI ADALET HESAPLAMA (GÜN VE SAAT ADALETİ BİRİM İÇİNDE DENGELENİR) ---
+        birimler_listesi = (
+            ["PCR", "Mikro", "Kültür"]
+            if birim_secimi == "Tüm Laboratuvar (Birleşik)"
+            else [birim_secimi]
+        )
+
+        saat_farklari = []
         kategori_farklari = []
-        for kat_adi, (w_list, agirlik) in kategoriler.items():
-            day_indices = gun_kategorisi_indeksleri(w_list)
-            max_kat = model.NewIntVar(0, 100, f"max_{kat_adi}")
-            min_kat = model.NewIntVar(0, 100, f"min_{kat_adi}")
 
-            for p in nobetci_personeller:
-                bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
-                kumulatif_kat_sayisi = get_prev(p, kat_adi) + bu_ay_kat_sayisi
-                model.Add(kumulatif_kat_sayisi <= max_kat)
-                model.Add(kumulatif_kat_sayisi >= min_kat)
+        for b_adi in birimler_listesi:
+            b_personelleri = [
+                p
+                for p in nobetci_personeller
+                if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == b_adi
+                or birim_secimi != "Tüm Laboratuvar (Birleşik)"
+            ]
 
-            fark = model.NewIntVar(0, 100, f"fark_{kat_adi}")
-            model.Add(fark == max_kat - min_kat)
-            kategori_farklari.append(agirlik * fark)
+            if not b_personelleri:
+                continue
+
+            max_b_saat = model.NewIntVar(0, 1000, f"max_saat_{b_adi}")
+            min_b_saat = model.NewIntVar(0, 1000, f"min_saat_{b_adi}")
+            for p in b_personelleri:
+                bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
+                model.Add(
+                    bu_ay_saat
+                    == sum(
+                        x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi)
+                    )
+                )
+                model.Add(bu_ay_saat <= max_b_saat)
+                model.Add(bu_ay_saat >= min_b_saat)
+
+            b_saat_farki = model.NewIntVar(0, 1000, f"saat_farki_{b_adi}")
+            model.Add(b_saat_farki == max_b_saat - min_b_saat)
+            saat_farklari.append(b_saat_farki)
+
+            for kat_adi, (w_list, agirlik) in kategoriler.items():
+                day_indices = gun_kategorisi_indeksleri(w_list)
+                max_kat = model.NewIntVar(0, 100, f"max_{b_adi}_{kat_adi}")
+                min_kat = model.NewIntVar(0, 100, f"min_{b_adi}_{kat_adi}")
+
+                for p in b_personelleri:
+                    bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
+                    kumulatif_kat_sayisi = (
+                        get_prev(p, kat_adi) + bu_ay_kat_sayisi
+                    )
+                    model.Add(kumulatif_kat_sayisi <= max_kat)
+                    model.Add(kumulatif_kat_sayisi >= min_kat)
+
+                fark = model.NewIntVar(0, 100, f"fark_{b_adi}_{kat_adi}")
+                model.Add(fark == max_kat - min_kat)
+                kategori_farklari.append(agirlik * fark)
 
         # --- ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI (SOFT COST) ---
         yigilma_farklari = []
@@ -1263,14 +1304,12 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             yigilma_farklari.append(diff)
 
         model.Minimize(
-            100000 * saat_farki
+            100000 * sum(saat_farklari)
             + sum(kategori_farklari)
             + 100 * sum(yigilma_farklari)
-            + 10 * max_bu_ay_saat
         )
 
         solver = cp_model.CpSolver()
-        # CPU KISITLAMASINI ENGELLEMEK İÇİN PARAMETRELER
         solver.parameters.num_search_workers = 2
         solver.parameters.max_time_in_seconds = 3.0
         status = solver.Solve(model)
@@ -1374,7 +1413,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 "Cumartesi",
                 "Pazar",
             ]
-            columns_tuples = [("AD SOYAD", "")]
+            columns_tuples = [("AD SOYAD", ""), ("Birim", "")]
             for g in gunler_listesi:
                 columns_tuples.extend(
                     [(g, "Devir"), (g, "Bu Ay"), (g, "Toplam")]
@@ -1395,6 +1434,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             istatistik_rows = []
 
             for p in nobetci_personeller:
+                p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
                 bu_ay_gunler = {g: 0 for g in gunler_listesi}
                 bu_ay_toplam_nobet = len(nobet_dict[p])
 
@@ -1411,7 +1451,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                         yarim_gun_tatil_gunleri,
                     )
 
-                row_dict = {("AD SOYAD", ""): p}
+                row_dict = {("AD SOYAD", ""): p, ("Birim", ""): p_birim}
 
                 for g in gunler_listesi:
                     devir_val = get_prev(p, g)
@@ -1525,7 +1565,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 gecmis_ay_son_gun_nobetcileri,
             )
 
-            # OTURUM HAFIZASINA KAYDET (RERUN KORUMASI)
+            # OTURUM HAFIZASINA KAYDET
             st.session_state.hesaplanan_sonuc = {
                 "df_liste": df_liste,
                 "df_istatistik": df_istatistik,
