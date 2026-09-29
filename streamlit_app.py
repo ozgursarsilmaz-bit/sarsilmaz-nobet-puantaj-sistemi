@@ -1238,7 +1238,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             "Pazar": ([6], 2000),
         }
 
-        # --- BİRİM BAZLI ADALET HESAPLAMA (GÜN VE SAAT ADALETİ BİRİM İÇİNDE DENGELENİR) ---
+        # --- BİRİM BAZLI ADALET HESAPLAMA (SAAT ADALETİ MUTLAK 1. ÖNCELİK) ---
         birimler_listesi = (
             ["PCR", "Mikro", "Kültür"]
             if birim_secimi == "Tüm Laboratuvar (Birleşik)"
@@ -1293,6 +1293,12 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 model.Add(fark == max_kat - min_kat)
                 kategori_farklari.append(agirlik * fark)
 
+        # MUTLAK SAAT EŞİTLİĞİ BASTIRMASI (10 MİLYON KATSAYISI)
+        model.Minimize(
+            10000000 * sum(saat_farklari)
+            + sum(kategori_farklari)
+            + 100 * sum(yigilma_farklari)
+        )
         # --- ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI (SOFT COST) ---
         yigilma_farklari = []
         yariyil = gun_sayisi // 2
