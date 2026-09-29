@@ -334,16 +334,38 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+    """Tek ve merkezi nöbet saati hesabı.
+
+    Öncelik sırası:
+    1) Resmî tatil: ertesi gün mesai yoksa 24, varsa 16 saat.
+       Bu kural hafta içi/Cumartesi/Pazar ayrımından önce uygulanır.
+    2) Yarım gün tatil: 19 saat.
+    3) Normal Cumartesi: 24 saat.
+    4) Normal Pazar: 16 saat.
+    5) Normal Cuma: 16 saat.
+    6) Ayın son günü: 16 saat.
+    7) Ertesi gün yarım gün tatil: 11 saat.
+    8) Ertesi gün resmî tatil: 16 saat.
+    9) Diğer hafta içi günler: 8 saat.
+    """
     dt = datetime.date(yil, ay, d)
     w = dt.weekday()
+
+    # RESMÎ TATİL HER ZAMAN ÖNCELİKLİDİR.
+    # Örn. resmî tatil olan Pazar, ertesi gün de tatilse 24 saat olur.
+    if d in resmi_tatil_gunleri:
+        sonraki_tarih = dt + datetime.timedelta(days=1)
+        sonraki_gun_mesaisiz = (
+            sonraki_tarih.weekday() in [5, 6]
+            or (d < gun_sayisi and (d + 1) in resmi_tatil_gunleri)
+        )
+        return 24 if sonraki_gun_mesaisiz else 16
 
     if d in yarim_gun_tatil_gunleri:
         return 19
     if w == 5:
         return 24
     if w == 6:
-        return 16
-    if d in resmi_tatil_gunleri:
         return 16
     if w == 4:
         return 16
@@ -378,13 +400,18 @@ def calculate_personel_puantaj_metrikleri(
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
 
-        if val in ["8", "5", "16", "19", "11", "24"]:
-            toplam_calisma += int(val)
-
+        # 24 hücresi artık "24 saat" anlamına gelen ham değer değildir;
+        # nöbet işaretidir. Gerçek nöbet süresi TEK KAYNAK olarak
+        # calculate_shift_hours() fonksiyonundan alınır.
         if val == "24":
-            is_risk = (d in acil_days_set)
-            n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+            n_saat = calculate_shift_hours(
+                yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+            )
+            toplam_calisma += n_saat
 
+            is_risk = (d in acil_days_set)
+
+            # Nöbet saatinin gece/gündüz dağılımı da aynı n_saat üzerinden yapılır.
             if n_saat in [16, 24]:
                 g_saat = 12
             elif n_saat in [8, 11]:
@@ -402,6 +429,9 @@ def calculate_personel_puantaj_metrikleri(
             else:
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
+        elif val in ["8", "5", "16", "19", "11"]:
+            # Normal mesai hücreleri kendi değerleriyle çalışma saatine eklenir.
+            toplam_calisma += int(val)
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
