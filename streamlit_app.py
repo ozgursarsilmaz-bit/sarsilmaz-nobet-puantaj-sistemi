@@ -535,41 +535,46 @@ def calculate_aylik_calisma_saati(
     return toplam_saat
 
 
-def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-    """
-    Nöbet Tutulan Günün Net Hakediş Saatini Hesaplar.
-    Ertesi gün yarım gün/arife ise normal hakedişe +3 saat eklenir (11 veya 19 saat olur).
-    """
+def calculate_shift_hours(
+    yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
+):
+    """Nöbet Tutulan Günün Net Hakediş Saatini Hesaplar."""
     dt = datetime.date(yil, ay, d)
 
-    # 1. Bizzat Arife/Yarım Gün Tutulan Nöbet (13:00'te başlayan) -> 19 Saat
+    # 1. Bizzat Arife/Yarım Gün Tutulan Nöbet -> 19 Saat
     if d in yarim_gun_tatil_gunleri:
         return 19
 
-    # 2. Tatil veya Hafta Sonu Nöbeti (Örn: Cumartesi veya Pazar)
+    # 2. AYIN SON GÜNÜ KURALI (Net ve Kesin Kural)
+    if d == gun_sayisi:
+        w = dt.weekday()  # 0: Pzt, 1: Sal, 2: Çar, 3: Per, 4: Cum, 5: Cmt, 6: Pzr
+        # 6. ve 7. günler (Cumartesi ve Pazar) -> 24 Saat
+        if w in [5, 6]:
+            return 24
+        # 1, 2, 3, 4, 5. günler (Pazartesi - Cuma) -> 16 Saat
+        else:
+            return 16
+
+    # 3. Normal Tatil veya Hafta Sonu Nöbeti (Ayın son günü dışındakiler)
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
         if d < gun_sayisi:
             sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
-            # Eğer ertesi gün yarım gün ise normal 16'ya +3 eklenir -> 19 olur
             if (d + 1) in yarim_gun_tatil_gunleri:
                 return 19
             return 24 if sonraki_gun_off else 16
         else:
             return 16
 
-    # 3. HAFTA İÇİ NORMAL NÖBET (Ertesi Gün Durumuna Göre)
+    # 4. HAFTA İÇİ NORMAL NÖBET
     if (d + 1) in yarim_gun_tatil_gunleri:
-        # Ertesi gün yarım gün olduğu için normal 8 saatlik hakedişe +3 eklenir -> 11 SAAT
         return 11
 
-    if (d + 1) <= gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
-        return 16
-
-    if d == gun_sayisi:
+    if (d + 1) <= gun_sayisi and is_day_off(
+        yil, ay, d + 1, resmi_tatil_gunleri
+    ):
         return 16
 
     return 8
-
 
 def calculate_personel_puantaj_metrikleri(
     p_row_dict,
