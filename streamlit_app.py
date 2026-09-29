@@ -270,7 +270,7 @@ with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_ci
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- SABİT ACİL NÖBET SEÇİM PANELİ ---
-st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🚨 Acil Nöbet Seçimi</div>', unsafe_allow_html=True)
 if "acil_satir_sayisi" not in st.session_state:
     st.session_state.acil_satir_sayisi = 1
 
@@ -334,58 +334,39 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
 def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-    """Tek ve merkezi nöbet saati hesabı.
-
-    Öncelik sırası:
-    1) Resmî tatil: ertesi gün mesai yoksa 24, varsa 16 saat.
-       Bu kural hafta içi/Cumartesi/Pazar ayrımından önce uygulanır.
-    2) Yarım gün tatil: 19 saat.
-    3) Normal Cumartesi: 24 saat.
-    4) Normal Pazar: 16 saat.
-    5) Normal Cuma: 16 saat.
-    6) Ayın son günü: 16 saat.
-    7) Ertesi gün yarım gün tatil: 11 saat.
-    8) Ertesi gün resmî tatil: 16 saat.
-    9) Diğer hafta içi günler: 8 saat.
-    """
+    """Günün statüsüne, ertesi günün durumuna ve ay sonuna göre net nöbet hakediş süresi."""
     dt = datetime.date(yil, ay, d)
     w = dt.weekday()
 
-    # RESMÎ TATİL HER ZAMAN ÖNCELİKLİDİR.
-    # Örn. resmî tatil olan Pazar, ertesi gün de tatilse 24 saat olur.
-    if d in resmi_tatil_gunleri:
+    # 1. ARİFE GÜNÜ NÖBETİ (13:00 - 08:00)
+    if d in yarim_gun_tatil_gunleri:
+        return 19
+
+    # 2. AYIN SON GÜNÜ HAFTA İÇİ (Nöbet peşin ödenir, izin ertesi aya devreder)
+    if d == gun_sayisi and w not in [5, 6] and d not in resmi_tatil_gunleri:
+        return 16
+
+    # 3. RESMÎ TATİL VEYA HAFTA SONU NÖBETİ
+    if d in resmi_tatil_gunleri or w in [5, 6]:
         sonraki_tarih = dt + datetime.timedelta(days=1)
         sonraki_gun_mesaisiz = (
             sonraki_tarih.weekday() in [5, 6]
             or (d < gun_sayisi and (d + 1) in resmi_tatil_gunleri)
         )
+        # Ertesi gün de tatilse Cumartesi mantığı (24s), ertesi gün mesai varsa Pazar mantığı (16s)
         return 24 if sonraki_gun_mesaisiz else 16
 
-    if d in yarim_gun_tatil_gunleri:
-        return 19
-    if w == 5:
-        return 24
-    if w == 6:
-        return 16
-    if w == 4:
-        return 16
-    if d == gun_sayisi:
-        return 16
-    if (d + 1) in yarim_gun_tatil_gunleri:
-        return 11
-    if (d + 1) in resmi_tatil_gunleri:
-        return 16
+    # 4. AY İÇİ HAFTA İÇİ GECE NÖBETİ (Ertesi gün izin düşülür, net 8s kalır)
     return 8
 
 def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
     toplam_saat = 0
     for d in range(1, gun_sayisi + 1):
         if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
-            if d in yarim_gun_tatil_gunleri: toplam_saat += 5
+            if d in yarim_gun_tatil_gunleri: toplam_saat += 4
             else: toplam_saat += 8
     return toplam_saat
 
-# ORİJİNAL HESAPLAMA FONKSİYONU (HİÇ DOKUNULMADI)
 def calculate_personel_puantaj_metrikleri(
     p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set
 ):
@@ -400,28 +381,32 @@ def calculate_personel_puantaj_metrikleri(
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
 
-        # 24 hücresi artık "24 saat" anlamına gelen ham değer değildir;
-        # nöbet işaretidir. Gerçek nöbet süresi TEK KAYNAK olarak
-        # calculate_shift_hours() fonksiyonundan alınır.
         if val == "24":
             n_saat = calculate_shift_hours(
                 yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
             )
             toplam_calisma += n_saat
-
             is_risk = (d in acil_days_set)
 
-            # Nöbet saatinin gece/gündüz dağılımı da aynı n_saat üzerinden yapılır.
-            if n_saat in [16, 24]:
+            # NET DAĞILIM KURALLARI (24, 19, 16, 11, 8 saatlik nöbetler için)
+            if n_saat == 24:
                 g_saat = 12
-            elif n_saat in [8, 11]:
-                g_saat = 8
+                gunduz_saat = 12
             elif n_saat == 19:
                 g_saat = 12
+                gunduz_saat = 7
+            elif n_saat == 16:
+                g_saat = 12
+                gunduz_saat = 4
+            elif n_saat == 11:
+                g_saat = 8
+                gunduz_saat = 3
+            elif n_saat == 8:
+                g_saat = 8
+                gunduz_saat = 0
             else:
                 g_saat = min(12, n_saat)
-
-            gunduz_saat = max(0, n_saat - g_saat)
+                gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
                 risk_gece += g_saat
@@ -429,8 +414,7 @@ def calculate_personel_puantaj_metrikleri(
             else:
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
-        elif val in ["8", "5", "16", "19", "11"]:
-            # Normal mesai hücreleri kendi değerleriyle çalışma saatine eklenir.
+        elif val in ["8", "4", "5", "16", "19", "11"]:
             toplam_calisma += int(val)
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
@@ -445,16 +429,12 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Normal": risk_normal,
     }
 
-    # --- TAMAMEN AYRI VE BAĞIMSIZ Nİ MAHSUPLAŞMA KODU ---
-    # Sadece ve sadece Ayın 1. Gününün değeri "Nİ" ise devreye girer
+    # AYIN 1. GÜNÜ Nİ MAHSUPLAŞMASI
     if str(p_row_dict.get("1", "")).strip() == "Nİ":
         dusum_miktari = 8
-        
-        # 1. Aşama: Normal Nöbet - Artırımsız (Normal) kaleminden 8 saat düşülür
         if res_dict["Normal_Normal"] >= dusum_miktari:
             res_dict["Normal_Normal"] -= dusum_miktari
         else:
-            # Yeterli saat yoksa Normal_Normal sıfırlanır, kalan eksik Normal_Gece'den düşülür
             kalan_eksik = dusum_miktari - res_dict["Normal_Normal"]
             res_dict["Normal_Normal"] = 0
             res_dict["Normal_Gece"] = max(0, res_dict["Normal_Gece"] - kalan_eksik)
@@ -462,7 +442,7 @@ def calculate_personel_puantaj_metrikleri(
     return res_dict
 
 
-# --- 3 SEKMELİ EXCEL OLUŞTURUCU (GÖRSEL TASARIM GÜNCELLEMESİ) ---
+# --- 3 SEKMELİ EXCEL OLUŞTURUCU ---
 def generate_3_tab_excel(
     yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, acil_nobet_dict,
     gecmis_istatistik, gecmis_acil_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, gecmis_ay_son_gun_nobetcileri
@@ -478,11 +458,9 @@ def generate_3_tab_excel(
 
     fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
     fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
-    
-    # GÖRSELDEKİ ÖZEL RENK TANIMLARI
-    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")  # Gri Tatil/Hafta Sonu
-    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") # Canlı Sarı Acil Nöbet
-    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")         # Beyaz Arka Plan
+    fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")
+    fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     thin_side = Side(style="thin", color="000000")
     border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
@@ -655,10 +633,9 @@ def generate_3_tab_excel(
 
     ws2.column_dimensions["A"].width = 25
 
-    # 3. SEKME: PUANTAJ TABLOSU (GÖRSELDEKİ DÜZENLEME)
+    # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
-
     ws3.row_dimensions[5].height = 110
 
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_white
@@ -680,7 +657,6 @@ def generate_3_tab_excel(
         cell.font = font_header
         cell.alignment = align_center
         cell.border = border_cell
-        # HAFTA SONLARI BAŞLIKTAN İTİBAREN GRİ DOLGU
         cell.fill = fill_grey_weekend if day in off_days else fill_white
 
     ek_basliklar = [
@@ -730,14 +706,12 @@ def generate_3_tab_excel(
             cell = ws3.cell(row=r, column=col_idx)
             cell.border = border_cell
             cell.alignment = align_center
-
-            # VARSAYILAN ARKA PLAN
             cell.fill = fill_grey_weekend if day in off_days else fill_white
 
             if is_muaf:
                 if day in off_days: cell.value = "T"
                 elif day in yarim_gun_tatil_gunleri:
-                    cell.value = 5
+                    cell.value = 4
                     cell.font = font_body
                 else:
                     cell.value = 8
@@ -751,7 +725,6 @@ def generate_3_tab_excel(
                 elif day in p_shifts:
                     cell.value = 24
                     cell.font = font_24
-                    # SADECE ACİL/RİSKLİ NÖBETTE CANLI SARI DOLGU
                     if day in p_acils:
                         cell.fill = fill_bright_yellow
                 elif (day - 1) in p_shifts:
@@ -762,7 +735,7 @@ def generate_3_tab_excel(
                 else:
                     if day in off_days: cell.value = "T"
                     elif day in yarim_gun_tatil_gunleri:
-                        cell.value = 5
+                        cell.value = 4
                         cell.font = font_body
                     else:
                         cell.value = 8
@@ -937,7 +910,25 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             model.Add(fark == max_kat - min_kat)
             kategori_farklari.append(agirlik * fark)
 
-        model.Minimize(100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat)
+        # ESNEK (SOFT) AYA YAYMA MALİYETİ
+        # Nöbetleri kilitlemeden tercihen aya homojen yayan ek maliyet fonksiyonu
+        aya_yayma_maliyetleri = []
+        for p in nobetci_personeller:
+            toplam_p_nobet = sum(x[(p, d)] for d in range(gun_sayisi))
+            for d1 in range(gun_sayisi):
+                for d2 in range(d1 + 1, min(gun_sayisi, d1 + 5)):
+                    # Peş peşe yakın aralıklara minik ceza puanı ekler
+                    yakinlik_penaltisi = model.NewBoolVar(f"yakin_{p}_{d1}_{d2}")
+                    model.Add(x[(p, d1)] + x[(p, d2)] == 2).OnlyEnforceIf(yakinlik_penaltisi)
+                    model.Add(x[(p, d1)] + x[(p, d2)] < 2).OnlyEnforceIf(yakinlik_penaltisi.Not())
+                    aya_yayma_maliyetleri.append(5 * yakinlik_penaltisi)
+
+        model.Minimize(
+            100000 * saat_farki 
+            + sum(kategori_farklari) 
+            + sum(aya_yayma_maliyetleri) 
+            + 10 * max_bu_ay_saat
+        )
 
         solver = cp_model.CpSolver()
         status = solver.Solve(model)
@@ -1064,7 +1055,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
                     if is_muaf:
                         if day_is_off: p_row[str(d)] = "T"
-                        elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
+                        elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "4"
                         else: p_row[str(d)] = "8"
                     else:
                         if d == 1 and p in gecmis_ay_son_gun_nobetcileri:
@@ -1077,7 +1068,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                             else: p_row[str(d)] = "Nİ"
                         else:
                             if day_is_off: p_row[str(d)] = "T"
-                            elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
+                            elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "4"
                             else: p_row[str(d)] = "8"
 
                 m = calculate_personel_puantaj_metrikleri(
