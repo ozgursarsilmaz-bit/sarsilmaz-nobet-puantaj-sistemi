@@ -516,9 +516,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # --- DİNAMİK HESAPLAMA YARDIMCI FONKSİYONLARI ---
 def is_day_off(yil, ay, day, resmi_tatil_gunleri):
-    """
-    Bir günün hafta sonu (Cumartesi/Pazar) veya seçilen tam gün resmi tatil olup olmadığını kontrol eder.
-    """
     dt = datetime.date(yil, ay, day)
     return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
 
@@ -526,11 +523,6 @@ def is_day_off(yil, ay, day, resmi_tatil_gunleri):
 def calculate_aylik_calisma_saati(
     yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
-    """
-    Aylık Hedef Çalışma Saatini (Matrah) Hesaplar.
-    Hafta sonları ve TAM GÜN RESMİ TATİLLER hedeften düşülür.
-    Arife / Yarım gün tatillerde 5 saat eklenir.
-    """
     toplam_saat = 0
     for d in range(1, gun_sayisi + 1):
         if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
@@ -544,17 +536,11 @@ def calculate_aylik_calisma_saati(
 def calculate_shift_hours(
     yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
 ):
-    """
-    Nöbet Tutulan Günün Net Hakediş Saatini Hesaplar.
-    Ertesi gün tatilse (veya resmi tatil devam ediyorsa) 24s; ertesi gün normal mesaiyse 16s.
-    """
     dt = datetime.date(yil, ay, d)
 
-    # Yarım Gün / Arife Nöbeti (19 Saat Net Hakediş)
     if d in yarim_gun_tatil_gunleri:
         return 19
 
-    # TATİL VEYA HAFTA SONU NÖBETİ
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
         if d < gun_sayisi:
             sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
@@ -562,7 +548,6 @@ def calculate_shift_hours(
         else:
             return 16
 
-    # HAFTA İÇİ NORMAL NÖBET (TATİL ÖNCESİ)
     if (d + 1) in yarim_gun_tatil_gunleri:
         return 11
     if (d + 1) <= gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
@@ -609,7 +594,6 @@ def calculate_personel_puantaj_metrikleri(
                 yarim_gun_tatil_gunleri,
             )
 
-            # Gece (Artırımlı) ve Gündüz (Normal) Ayrımı
             if n_saat in [16, 24]:
                 g_saat = 12
             elif n_saat in [8, 11]:
@@ -640,7 +624,6 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Normal": risk_normal,
     }
 
-    # Ayın 1'indeki Nİ Mahsuplaşması
     if str(p_row_dict.get("1", "")).strip() == "Nİ":
         dusum_miktari = 8
         if res_dict["Normal_Normal"] >= dusum_miktari:
@@ -1269,12 +1252,25 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             model.Add(fark == max_kat - min_kat)
             kategori_farklari.append(agirlik * fark)
 
+        # --- ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI (SOFT COST) ---
+        yigilma_farklari = []
+        yariyil = gun_sayisi // 2
+        for p in nobetci_personeller:
+            n1 = sum(x[(p, d)] for d in range(0, yariyil))
+            n2 = sum(x[(p, d)] for d in range(yariyil, gun_sayisi))
+            diff = model.NewIntVar(0, 31, f"y_diff_{p}")
+            model.AddAbsEquality(diff, n1 - n2)
+            yigilma_farklari.append(diff)
+
         model.Minimize(
-            100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
+            100000 * saat_farki
+            + sum(kategori_farklari)
+            + 100 * sum(yigilma_farklari)
+            + 10 * max_bu_ay_saat
         )
 
         solver = cp_model.CpSolver()
-        # CPU KISITLAMASINI (THROTTLING) ENGELLEMEK İÇİN SIKI LİMİTLER
+        # CPU KISITLAMASINI ENGELLEMEK İÇİN PARAMETRELER
         solver.parameters.num_search_workers = 2
         solver.parameters.max_time_in_seconds = 3.0
         status = solver.Solve(model)
