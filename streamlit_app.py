@@ -530,20 +530,23 @@ def calculate_shift_hours(
 
     if d in yarim_gun_tatil_gunleri:
         return 19
-    if w == 5:
-        return 24
-    if w == 6:
-        return 16
-    if d in resmi_tatil_gunleri:
-        return 16
-    if w == 4:
+
+    # TATİL VEYA HAFTA SONU NÖBETLERİ HAKEDİŞ HESABI
+    if is_day_off(yil, ay, d, resmi_tatil_gunleri):
+        if d < gun_sayisi:
+            sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
+            return 24 if sonraki_gun_off else 16
+        else:
+            return 16
+
+    # TATİL ÖNCESİ (HAFTA İÇİ) NÖBETLERİ
+    if (d + 1) in yarim_gun_tatil_gunleri:
+        return 11
+    if (d + 1) <= gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri):
         return 16
     if d == gun_sayisi:
         return 16
-    if (d + 1) in yarim_gun_tatil_gunleri:
-        return 11
-    if (d + 1) in resmi_tatil_gunleri:
-        return 16
+
     return 8
 
 
@@ -583,7 +586,8 @@ def calculate_personel_puantaj_metrikleri(
         val = str(p_row_dict.get(str(d), "")).strip()
 
         if val in ["8", "5", "16", "19", "11", "24"]:
-            toplam_calisma += int(val)
+            fiili_saat = 23 if d in yarim_gun_tatil_gunleri else 24 if val == "24" else int(val)
+            toplam_calisma += fiili_saat
 
         if val == "24":
             is_risk = d in acil_days_set
@@ -1259,7 +1263,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         )
 
         solver = cp_model.CpSolver()
-        # CPU Throttling engellemek için 3 saniye süre sınırı ve 2 çekirdek kullanımı
+        # CPU THROTTLING UYARISINI KESİN ENGELLEMEK İÇİN SIKI SÜRE LİMİTİ VE ÇEKİRDEK AYARI
         solver.parameters.num_search_workers = 2
         solver.parameters.max_time_in_seconds = 3.0
         status = solver.Solve(model)
