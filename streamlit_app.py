@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- SESSION STATE (OTURUM HAFIZASI) İNİTİALİZASYONU ---
+# --- SESSION STATE (OTURUM HAFIZASI) ---
 if "hesaplanan_sonuc" not in st.session_state:
     st.session_state.hesaplanan_sonuc = None
 
@@ -64,28 +64,15 @@ TUM_PERSONEL_VERISI = {
 st.markdown(
     """
 <style>
-    .main .block-container {
-        padding-top: 0.25rem !important;
-        padding-bottom: 2rem !important;
-    }
-    [data-testid="stMainBlockContainer"],
-    [data-testid="stAppViewContainer"] .main > div,
-    [data-testid="stAppViewContainer"] .main .block-container {
-        padding-top: 0.25rem !important;
-    }
+    .main .block-container { padding-top: 0.25rem !important; padding-bottom: 2rem !important; }
+    [data-testid="stMainBlockContainer"], [data-testid="stAppViewContainer"] .main > div, [data-testid="stAppViewContainer"] .main .block-container { padding-top: 0.25rem !important; }
     [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
     section.main { padding-top: 0 !important; }
     [data-testid="stHeader"], .stAppHeader { display: none !important; }
     .main { background-color: #F8F9FA; }
-    
     .header-box {
-        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
-        color: white;
-        padding: 12px 20px;
-        border-radius: 10px;
-        box-shadow: 0 3px 8px rgba(13, 110, 253, 0.15);
-        margin-bottom: 12px;
-        position: relative;
+        background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%); color: white; padding: 12px 20px;
+        border-radius: 10px; box-shadow: 0 3px 8px rgba(13, 110, 253, 0.15); margin-bottom: 12px; position: relative;
     }
     .header-box h1 { margin: 0; font-size: 1.35rem !important; font-weight: 700; line-height: 1.2; }
     .header-box p { margin: 2px 0 0 0; opacity: 0.88; font-size: 0.82rem !important; }
@@ -93,10 +80,8 @@ st.markdown(
     div[data-testid="stMetric"] { background-color: #FFFFFF; border: 1px solid #E9ECEF; padding: 10px 14px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
     .section-title { font-size: 1.1rem; font-weight: 700; color: #212529; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
     .stButton>button {
-        width: 100%;
-        background: linear-gradient(135deg, #198754 0%, #146c43 100%);
-        color: white; border: none; padding: 10px 20px; font-size: 1rem; font-weight: 600; border-radius: 8px;
-        box-shadow: 0 4px 10px rgba(25, 135, 84, 0.2); transition: all 0.3s ease;
+        width: 100%; background: linear-gradient(135deg, #198754 0%, #146c43 100%); color: white; border: none;
+        padding: 10px 20px; font-size: 1rem; font-weight: 600; border-radius: 8px; box-shadow: 0 4px 10px rgba(25, 135, 84, 0.2); transition: all 0.3s ease;
     }
     .stButton>button:hover { background: linear-gradient(135deg, #146c43 0%, #0f5132 100%); transform: translateY(-1px); box-shadow: 0 6px 14px rgba(25, 135, 84, 0.3); }
     .direct-download-btn {
@@ -105,8 +90,6 @@ st.markdown(
         border-radius: 8px; box-shadow: 0 4px 10px rgba(13, 110, 253, 0.25); transition: all 0.3s ease;
     }
     .direct-download-btn:hover { background: linear-gradient(135deg, #0a58ca 0%, #084298 100%); transform: translateY(-1px); box-shadow: 0 6px 14px rgba(13, 110, 253, 0.35); }
-    [data-testid="stHorizontalBlock"] { align-items: center !important; gap: 0.5rem !important; }
-    div[data-testid="column"] { padding: 0px !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -547,17 +530,20 @@ def calculate_shift_hours(
 
     if d in yarim_gun_tatil_gunleri:
         return 19
+    if w == 5:
+        return 24
+    if w == 6:
+        return 16
+    if d in resmi_tatil_gunleri:
+        return 16
+    if w == 4:
+        return 16
+    if d == gun_sayisi:
+        return 16
     if (d + 1) in yarim_gun_tatil_gunleri:
         return 11
-    if d == gun_sayisi and w not in [5, 6] and d not in resmi_tatil_gunleri:
+    if (d + 1) in resmi_tatil_gunleri:
         return 16
-    if d in resmi_tatil_gunleri or w in [5, 6]:
-        sonraki_tarih = dt + datetime.timedelta(days=1)
-        sonraki_gun_mesaisiz = (
-            sonraki_tarih.weekday() in [5, 6]
-            or (d < gun_sayisi and (d + 1) in resmi_tatil_gunleri)
-        )
-        return 24 if sonraki_gun_mesaisiz else 16
     return 8
 
 
@@ -596,11 +582,11 @@ def calculate_personel_puantaj_metrikleri(
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
 
-        if val == "24":
-            fiili_saat = 23 if d in yarim_gun_tatil_gunleri else 24
-            toplam_calisma += fiili_saat
-            is_risk = d in acil_days_set
+        if val in ["8", "5", "16", "19", "11", "24"]:
+            toplam_calisma += int(val)
 
+        if val == "24":
+            is_risk = d in acil_days_set
             n_saat = calculate_shift_hours(
                 yil,
                 ay,
@@ -610,24 +596,16 @@ def calculate_personel_puantaj_metrikleri(
                 yarim_gun_tatil_gunleri,
             )
 
-            if n_saat == 24:
+            if n_saat in [16, 24]:
                 g_saat = 12
-                gunduz_saat = 12
+            elif n_saat in [8, 11]:
+                g_saat = 8
             elif n_saat == 19:
                 g_saat = 12
-                gunduz_saat = 7
-            elif n_saat == 16:
-                g_saat = 12
-                gunduz_saat = 4
-            elif n_saat == 11:
-                g_saat = 8
-                gunduz_saat = 3
-            elif n_saat == 8:
-                g_saat = 8
-                gunduz_saat = 0
             else:
                 g_saat = min(12, n_saat)
-                gunduz_saat = max(0, n_saat - g_saat)
+
+            gunduz_saat = max(0, n_saat - g_saat)
 
             if is_risk:
                 risk_gece += g_saat
@@ -635,8 +613,6 @@ def calculate_personel_puantaj_metrikleri(
             else:
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
-        elif val in ["8", "5", "4"]:
-            toplam_calisma += int(val)
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
@@ -928,6 +904,7 @@ def generate_3_tab_excel(
     # 3. SEKME: PUANTAJ TABLOSU
     ws3 = wb.create_sheet("Puantaj Tablosu")
     ws3.views.sheetView[0].showGridLines = True
+
     ws3.row_dimensions[5].height = 110
 
     ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_white
@@ -1277,29 +1254,14 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             model.Add(fark == max_kat - min_kat)
             kategori_farklari.append(agirlik * fark)
 
-        aya_yayma_maliyetleri = []
-        for p in nobetci_personeller:
-            for d1 in range(gun_sayisi):
-                for d2 in range(d1 + 1, min(gun_sayisi, d1 + 5)):
-                    yakinlik_penaltisi = model.NewBoolVar(f"yakin_{p}_{d1}_{d2}")
-                    model.Add(x[(p, d1)] + x[(p, d2)] == 2).OnlyEnforceIf(
-                        yakinlik_penaltisi
-                    )
-                    model.Add(x[(p, d1)] + x[(p, d2)] < 2).OnlyEnforceIf(
-                        yakinlik_penaltisi.Not()
-                    )
-                    aya_yayma_maliyetleri.append(5 * yakinlik_penaltisi)
-
         model.Minimize(
-            100000 * saat_farki
-            + sum(kategori_farklari)
-            + sum(aya_yayma_maliyetleri)
-            + 10 * max_bu_ay_saat
+            100000 * saat_farki + sum(kategori_farklari) + 10 * max_bu_ay_saat
         )
 
         solver = cp_model.CpSolver()
-        # Solver için 15 saniye zaman sınırı eklendi
-        solver.parameters.max_time_in_seconds = 15.0
+        # CPU Throttling engellemek için 3 saniye süre sınırı ve 2 çekirdek kullanımı
+        solver.parameters.num_search_workers = 2
+        solver.parameters.max_time_in_seconds = 3.0
         status = solver.Solve(model)
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -1311,6 +1273,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     if solver.Value(x[(p, d)]) == 1:
                         nobet_dict[p].add(d + 1)
 
+            # ACİL NÖBET DAĞITIM ALGORİTMASI
             bu_ay_acil_saat = {p: 0 for p in nobetci_personeller}
             kumulatif_acil_saat = {
                 p: get_prev_acil(p) for p in nobetci_personeller
@@ -1359,6 +1322,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                         bu_ay_acil_saat[secilen_acil] += g_saat
                         kumulatif_acil_saat[secilen_acil] += g_saat
 
+            # TABLOLARI HAZIRLA
             liste_data = []
             for d in range(1, gun_sayisi + 1):
                 tarih = datetime.date(yil, ay, d)
@@ -1550,7 +1514,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 gecmis_ay_son_gun_nobetcileri,
             )
 
-            # SONUÇLARI OTURUM HAFIZASINA (SESSION_STATE) KAYDET
+            # OTURUM HAFIZASINA KAYDET (RERUN KORUMASI)
             st.session_state.hesaplanan_sonuc = {
                 "df_liste": df_liste,
                 "df_istatistik": df_istatistik,
@@ -1562,12 +1526,13 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             }
             st.balloons()
             st.success("✨ Nöbet çizelgesi ve Puantaj tablosu başarıyla oluşturuldu!")
+
         else:
             st.error(
                 "❌ Çözüm bulunamadı! Girilen kısıtlar, izinler veya sabit nöbetler çakışıyor olabilir."
             )
 
-# --- SONUÇLARIN EKRANDA KALICI OLAARAK GÖSTERİLMESİ ---
+# --- SONUÇLARI EKRANDA KALICI OLAARAK GÖSTER ---
 if st.session_state.hesaplanan_sonuc is not None:
     sonuc = st.session_state.hesaplanan_sonuc
     b64 = base64.b64encode(sonuc["excel_bytes"].getvalue()).decode()
