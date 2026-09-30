@@ -154,7 +154,7 @@ gun_secenekleri = list(range(1, gun_sayisi + 1))
 
 # --- RESMİ VE İDARİ TATİL SEÇİM PANELİ ---
 st.sidebar.markdown("---")
-st.sidebar.subheader("🏖️ Resmi & İdari Tatil Günleri")
+st.sidebar.subheader("🏖️️ Resmi & İdari Tatil Günleri")
 
 resmi_tatil_gunleri = st.sidebar.multiselect(
     "Tam Gün Tatil / Resmi Günler:",
@@ -610,6 +610,7 @@ def calculate_personel_puantaj_metrikleri(
     resmi_tatil_gunleri,
     yarim_gun_tatil_gunleri,
     acil_days_set,
+    kultur_8s_tatil_gunleri,
 ):
     aylik_hedef_saat = calculate_aylik_calisma_saati(
         yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
@@ -624,18 +625,19 @@ def calculate_personel_puantaj_metrikleri(
     for d in range(1, gun_sayisi + 1):
         val = str(p_row_dict.get(str(d), "")).strip()
 
+        # Sayısal Çalışma Saatlerinin Toplanması
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
 
+        # Nİ (Nöbet İzni) görüldüğünde rutin mesai saatinden (8 saat) mahsup düşülür
+        if val == "Nİ":
+            toplam_calisma -= 8
+
+        # 24 Saatlik Tam Nöbet Hakediş Hesabı
         if val == "24":
             is_risk = d in acil_days_set
             n_saat = calculate_shift_hours(
-                yil,
-                ay,
-                d,
-                gun_sayisi,
-                resmi_tatil_gunleri,
-                yarim_gun_tatil_gunleri,
+                yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri
             )
 
             if n_saat in [16, 24]:
@@ -656,7 +658,8 @@ def calculate_personel_puantaj_metrikleri(
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
 
-        elif val == "8" and is_day_off(yil, ay, d, resmi_tatil_gunleri):
+        # SADECE Manuel Seçilen Resmi Tatil 8s Vardiyası -> Normal_Normal Sütununa Eklenir
+        elif val == "8" and d in kultur_8s_tatil_gunleri:
             norm_normal += 8
 
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
@@ -670,15 +673,6 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Gece": risk_gece,
         "Riskli_Normal": risk_normal,
     }
-
-    if str(p_row_dict.get("1", "")).strip() == "Nİ":
-        dusum_miktari = 8
-        if res_dict["Normal_Normal"] >= dusum_miktari:
-            res_dict["Normal_Normal"] -= dusum_miktari
-        else:
-            kalan_eksik = dusum_miktari - res_dict["Normal_Normal"]
-            res_dict["Normal_Normal"] = 0
-            res_dict["Normal_Gece"] = max(0, res_dict["Normal_Gece"] - kalan_eksik)
 
     return res_dict
 
@@ -1077,6 +1071,8 @@ def generate_3_tab_excel(
             cell.alignment = align_center
             cell.fill = fill_grey_weekend if day in off_days else fill_white
 
+            dt = datetime.date(yil, ay, day)
+
             if is_muaf:
                 if day in off_days:
                     cell.value = "T"
@@ -1088,10 +1084,8 @@ def generate_3_tab_excel(
                     cell.font = font_body
             else:
                 if day == 1 and p in gecmis_ay_son_gun_nobetcileri:
-                    if day in off_days:
-                        cell.value = "T"
-                    else:
-                        cell.value = "Nİ"
+                    cell.value = "T" if day in off_days else "Nİ"
+                    if cell.value == "Nİ":
                         cell.font = font_ni
                 elif day in p_shifts:
                     cell.value = 24
@@ -1101,27 +1095,15 @@ def generate_3_tab_excel(
                 elif day in p_k8_shifts:
                     cell.value = 8
                     cell.font = font_bold
-                elif (day - 1) in p_shifts or (
-                    (day - 1) in p_k8_shifts
-                    and datetime.date(yil, ay, day - 1).weekday() == 5
-                ):
-                    dt = datetime.date(yil, ay, day)
-                    prev_dt = datetime.date(yil, ay, day - 1)
-                    if (day - 1) in p_shifts:
-                        cell.value = "T" if day in off_days else "Nİ"
-                        if cell.value == "Nİ":
-                            cell.font = font_ni
-                    elif (day - 1) in p_k8_shifts and prev_dt.weekday() == 5:
-                        cell.value = "T" if day in off_days else "Nİ"
-                        if cell.value == "Nİ":
-                            cell.font = font_ni
-                elif (
-                    datetime.date(yil, ay, day).weekday() == 0
-                    and (day - 2) in p_k8_shifts
-                    and datetime.date(yil, ay, day - 2).weekday() == 5
-                ):
+                elif (day - 1) in p_shifts:
+                    cell.value = "T" if day in off_days else "Nİ"
+                    if cell.value == "Nİ":
+                        cell.font = font_ni
+                elif dt.weekday() == 0 and (day - 2) in p_k8_shifts and datetime.date(yil, ay, day - 2).weekday() == 5:
                     cell.value = "Nİ"
                     cell.font = font_ni
+                elif (day - 1) in p_k8_shifts and datetime.date(yil, ay, day - 1).weekday() == 5:
+                    cell.value = "T"
                 else:
                     if day in off_days:
                         cell.value = "T"
@@ -1142,6 +1124,7 @@ def generate_3_tab_excel(
             resmi_tatil_gunleri,
             yarim_gun_tatil_gunleri,
             p_acils,
+            kultur_8s_tatil_gunleri,
         )
 
         metrik_values = [
@@ -1249,7 +1232,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             ):
                 tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
                 hata_listesi.append(
-                    f"⚠️️ **{tarih_str}** ({d+1}. gün): İzinler nedeniyle en az bir birimde yeterli nöbetçi yok!"
+                    f"⚠️ **{tarih_str}** ({d+1}. gün): İzinler nedeniyle en az bir birimde yeterli nöbetçi yok!"
                 )
         else:
             musait_sayisi = sum(
@@ -1728,6 +1711,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
 
                 for d in range(1, gun_sayisi + 1):
                     day_is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
+                    dt = datetime.date(yil, ay, d)
 
                     if is_muaf:
                         if day_is_off:
@@ -1738,30 +1722,17 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                             p_row[str(d)] = "8"
                     else:
                         if d == 1 and p in gecmis_ay_son_gun_nobetcileri:
-                            if day_is_off:
-                                p_row[str(d)] = "T"
-                            else:
-                                p_row[str(d)] = "Nİ"
+                            p_row[str(d)] = "T" if day_is_off else "Nİ"
                         elif d in p_shifts:
                             p_row[str(d)] = "24"
                         elif d in p_k8_shifts:
                             p_row[str(d)] = "8"
-                        elif (d - 1) in p_shifts or (
-                            (d - 1) in p_k8_shifts
-                            and datetime.date(yil, ay, d - 1).weekday() == 5
-                        ):
-                            dt = datetime.date(yil, ay, d)
-                            prev_dt = datetime.date(yil, ay, d - 1)
-                            if (d - 1) in p_shifts:
-                                p_row[str(d)] = "T" if day_is_off else "Nİ"
-                            elif (d - 1) in p_k8_shifts and prev_dt.weekday() == 5:
-                                p_row[str(d)] = "T" if day_is_off else "Nİ"
-                        elif (
-                            datetime.date(yil, ay, d).weekday() == 0
-                            and (d - 2) in p_k8_shifts
-                            and datetime.date(yil, ay, d - 2).weekday() == 5
-                        ):
+                        elif (d - 1) in p_shifts:
+                            p_row[str(d)] = "T" if day_is_off else "Nİ"
+                        elif dt.weekday() == 0 and (d - 2) in p_k8_shifts and datetime.date(yil, ay, d - 2).weekday() == 5:
                             p_row[str(d)] = "Nİ"
+                        elif (d - 1) in p_k8_shifts and datetime.date(yil, ay, d - 1).weekday() == 5:
+                            p_row[str(d)] = "T"
                         else:
                             if day_is_off:
                                 p_row[str(d)] = "T"
@@ -1778,6 +1749,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     resmi_tatil_gunleri,
                     yarim_gun_tatil_gunleri,
                     acil_nobet_dict.get(p, set()),
+                    kultur_8s_tatil_gunleri,
                 )
                 p_row["Toplam çalışma saati"] = m["Toplam Çalışma Saati"]
                 p_row["Aylık Çalışma Saati"] = m["Aylık Çalışma Saati"]
