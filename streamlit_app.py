@@ -271,7 +271,12 @@ if uploaded_file is not None:
                     continue
 
                 p_dict = {}
-                offset = 1 if "Birim" in str(df_gecmis.iloc[0]).strip() or len(df_gecmis.columns) > 28 else 0
+                offset = (
+                    1
+                    if "Birim" in str(df_gecmis.iloc[0]).strip()
+                    or len(df_gecmis.columns) > 28
+                    else 0
+                )
                 for g_idx, g_name in enumerate(gunler_sira):
                     toplam_col_idx = (3 + offset) + (g_idx * 3)
                     try:
@@ -545,17 +550,15 @@ def calculate_shift_hours(
     if d in yarim_gun_tatil_gunleri:
         return 19
 
-    # 2. AYIN SON GÜNÜ KURALI (Net ve Kesin Kural)
+    # 2. AYIN SON GÜNÜ KURALI (Net ve Kesin Kural: 1-5 gün arası 16s, 6-7 gün arası 24s)
     if d == gun_sayisi:
         w = dt.weekday()  # 0: Pzt, 1: Sal, 2: Çar, 3: Per, 4: Cum, 5: Cmt, 6: Pzr
-        # 6. ve 7. günler (Cumartesi ve Pazar) -> 24 Saat
         if w in [5, 6]:
             return 24
-        # 1, 2, 3, 4, 5. günler (Pazartesi - Cuma) -> 16 Saat
         else:
             return 16
 
-    # 3. Normal Tatil veya Hafta Sonu Nöbeti (Ayın son günü dışındakiler)
+    # 3. Normal Tatil veya Hafta Sonu Nöbeti
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
         if d < gun_sayisi:
             sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
@@ -575,6 +578,7 @@ def calculate_shift_hours(
         return 16
 
     return 8
+
 
 def calculate_personel_puantaj_metrikleri(
     p_row_dict,
@@ -762,7 +766,7 @@ def generate_3_tab_excel(
     ws1.column_dimensions["D"].width = 25
     ws1.column_dimensions["E"].width = 25
 
-    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ (BİRİM SÜTUNU EKLENDİ)
+    # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ
     ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
     ws2.views.sheetView[0].showGridLines = True
 
@@ -982,9 +986,7 @@ def generate_3_tab_excel(
         r = 6 + idx
         ws3.row_dimensions[r].height = 18
 
-        p_birim = TUM_PERSONEL_VERISI.get(p, {}).get(
-            "birim", birim_secimi
-        )
+        p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
         is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
 
         c_name = ws3.cell(row=r, column=1, value=p)
@@ -1075,6 +1077,46 @@ def generate_3_tab_excel(
             cell.font = font_bold if m_idx < 3 else font_body
             cell.alignment = align_center
             cell.border = border_cell
+
+    # --- PUANTAJ TABLOSU EN ALT SATIR: HESAPLANAN NÖBET SAATİ ---
+    summary_r = 6 + len(tum_girilen_personeller)
+    ws3.row_dimensions[summary_r].height = 20
+
+    c_sum_name = ws3.cell(
+        row=summary_r, column=1, value="Hesaplanan Nöbet Saati"
+    )
+    c_sum_name.fill = fill_green_bg
+    c_sum_name.font = font_bold
+    c_sum_name.alignment = align_left
+    c_sum_name.border = border_cell
+
+    c_sum_unit = ws3.cell(row=summary_r, column=2, value="")
+    c_sum_unit.fill = fill_green_bg
+    c_sum_unit.font = font_bold
+    c_sum_unit.alignment = align_center
+    c_sum_unit.border = border_cell
+
+    for day in range(1, gun_sayisi + 1):
+        col_idx = day + 2
+        shift_h = calculate_shift_hours(
+            yil,
+            ay,
+            day,
+            gun_sayisi,
+            resmi_tatil_gunleri,
+            yarim_gun_tatil_gunleri,
+        )
+        cell = ws3.cell(row=summary_r, column=col_idx, value=shift_h)
+        cell.font = font_bold
+        cell.alignment = align_center
+        cell.border = border_cell
+        cell.fill = fill_green_bg
+
+    for m_idx in range(len(ek_basliklar)):
+        c_i = start_col + m_idx
+        cell = ws3.cell(row=summary_r, column=c_i, value="")
+        cell.fill = fill_green_bg
+        cell.border = border_cell
 
     ws3.column_dimensions["A"].width = 28
     ws3.column_dimensions["B"].width = 12
