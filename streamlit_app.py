@@ -628,6 +628,7 @@ def calculate_personel_puantaj_metrikleri(
         if val in ["8", "5", "16", "19", "11", "24"]:
             toplam_calisma += int(val)
 
+        # 24 Saatlik Tam Nöbet Hesaplaması
         if val == "24":
             is_risk = d in acil_days_set
             n_saat = calculate_shift_hours(
@@ -657,6 +658,10 @@ def calculate_personel_puantaj_metrikleri(
                 norm_gece += g_saat
                 norm_normal += gunduz_saat
 
+        # Tatil/Hafta Sonu Günlerinde Tutulan 8 Saatlik Kültür Vardiyası -> Artırımsız Normal Nöbet Saatlerine Ekleme
+        elif val == "8" and is_day_off(yil, ay, d, resmi_tatil_gunleri):
+            norm_normal += 8
+
     fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
     res_dict = {
@@ -669,6 +674,7 @@ def calculate_personel_puantaj_metrikleri(
         "Riskli_Normal": risk_normal,
     }
 
+    # Ayın 1. Günü Nİ İzin Mahsuplaşması
     if str(p_row_dict.get("1", "")).strip() == "Nİ":
         dusum_miktari = 8
         if res_dict["Normal_Normal"] >= dusum_miktari:
