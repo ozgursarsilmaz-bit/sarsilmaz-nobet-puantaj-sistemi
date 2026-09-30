@@ -312,19 +312,20 @@ if uploaded_file is not None:
                     k8_devir_val = 0
                 gecmis_kultur8_istatistik[p_name] = k8_devir_val
 
-        if "Aylık Görev Listesi" in xls.sheet_names:
+       if "Aylık Görev Listesi" in xls.sheet_names:
             df_goreg = pd.read_excel(
                 xls, sheet_name="Aylık Görev Listesi", skiprows=2
             )
             if not df_goreg.empty:
                 last_row = df_goreg.iloc[-1]
+                # Sadece 24s nöbet sütunlarını kontrol et (8s Vardiya sütunu muaf tutulur)
                 for col_name in ["PCR", "Mikro", "Kültür"]:
                     if col_name in df_goreg.columns and pd.notna(
                         last_row[col_name]
                     ):
                         names = str(last_row[col_name]).split(",")
                         for n in names:
-                            clean_n = n.replace("(Acil)", "").replace("(8s Vardiya)", "").strip().upper()
+                            clean_n = n.replace("(Acil)", "").strip().upper()
                             if clean_n in nobetci_personeller:
                                 otomatik_son_gun_nobetcileri.append(clean_n)
 
@@ -753,7 +754,7 @@ def generate_3_tab_excel(
         value=f"{yil} yılı {ay}. Ay Mikrobiyoloji Laboratuvarı Nöbet Çizelgesi",
     ).font = font_title
 
-    headers1 = ["Tarih", "Gün", "PCR", "Mikro", "Kültür"]
+    headers1 = ["Tarih", "Gün", "PCR", "Mikro", "Kültür", "Kültür (8s Vardiya)"]
     for c_idx, h in enumerate(headers1, 1):
         cell = ws1.cell(row=3, column=c_idx, value=h)
         cell.font = font_header
@@ -765,34 +766,32 @@ def generate_3_tab_excel(
         r = d + 3
         tarih = datetime.date(yil, ay, d)
 
-        pcr_list, mikro_list, kultur_list = [], [], []
+        pcr_list, mikro_list, kultur_list, kultur_8s_list = [], [], [], []
         for p in nobetci_personeller:
             p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
             is_24 = d in nobet_dict.get(p, set())
             is_8s = d in kultur_8s_dict.get(p, set())
             is_acil = d in acil_nobet_dict.get(p, set())
 
-            if is_24 or is_8s:
-                p_text = p
-                if is_8s:
-                    p_text += " (8s Vardiya)"
-                elif is_acil:
-                    p_text += " (Acil)"
-
+            if is_24:
+                p_text = f"{p} (Acil)" if is_acil else p
                 if p_unit == "PCR":
                     pcr_list.append(p_text)
                 elif p_unit == "Mikro":
                     mikro_list.append(p_text)
                 elif p_unit == "Kültür":
                     kultur_list.append(p_text)
+            elif is_8s:
+                kultur_8s_list.append(p)
 
         c1 = ws1.cell(row=r, column=1, value=tarih.strftime("%d.%m.%Y"))
         c2 = ws1.cell(row=r, column=2, value=tr_gunler[tarih.weekday()])
         c3 = ws1.cell(row=r, column=3, value=", ".join(pcr_list))
         c4 = ws1.cell(row=r, column=4, value=", ".join(mikro_list))
         c5 = ws1.cell(row=r, column=5, value=", ".join(kultur_list))
+        c6 = ws1.cell(row=r, column=6, value=", ".join(kultur_8s_list))
 
-        for c in [c1, c2, c3, c4, c5]:
+        for c in [c1, c2, c3, c4, c5, c6]:
             c.font = font_body
             c.border = border_cell
             c.alignment = align_center if c in [c1, c2] else align_left
@@ -803,7 +802,8 @@ def generate_3_tab_excel(
     ws1.column_dimensions["B"].width = 13
     ws1.column_dimensions["C"].width = 25
     ws1.column_dimensions["D"].width = 25
-    ws1.column_dimensions["E"].width = 30
+    ws1.column_dimensions["E"].width = 25
+    ws1.column_dimensions["F"].width = 25
 
     # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ
     ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
@@ -1383,7 +1383,7 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                                 x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1
                             )
 
-        for rule in kisi_kisitlari:
+       for rule in kisi_kisitlari:
             p1 = rule["ana"]
             aralik = rule["aralik"]
             for p2 in rule["yasaklilar"]:
@@ -1391,7 +1391,13 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     for d2 in range(
                         max(0, d1 - aralik), min(gun_sayisi, d1 + aralik + 1)
                     ):
-                        model.Add(x[(p1, d1)] + x[(p2, d2)] <= 1)
+                        p1_gorev = x[(p1, d1)] + (
+                            k8[(p1, d1)] if p1 in kultur_nobetcileri else 0
+                        )
+                        p2_gorev = x[(p2, d2)] + (
+                            k8[(p2, d2)] if p2 in kultur_nobetcileri else 0
+                        )
+                        model.Add(p1_gorev + p2_gorev <= 1)
 
         def gun_kategorisi_indeksleri(w_list):
             return [
