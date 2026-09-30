@@ -169,6 +169,16 @@ yarim_gun_tatil_gunleri = st.sidebar.multiselect(
     help="Arife veya yarım gün tatil günlerini seçiniz.",
 )
 
+# KÜLTÜR 8 SAAT VARDİYA TATİL SEÇİMİ
+st.sidebar.markdown("---")
+st.sidebar.subheader("🧫 Kültür 8s Gündüz Vardiyası")
+kultur_8s_tatil_gunleri = st.sidebar.multiselect(
+    "Kültür 8s Tatil Vardiyası Günleri:",
+    options=resmi_tatil_gunleri,
+    default=[],
+    help="Resmi tatillerde Kültür biriminden 1 kişinin 8 saatlik vardiyaya geleceği ek tatil günlerini seçiniz. Cumartesiler otomatiktir.",
+)
+
 # BİRİM SEÇİMİ
 st.sidebar.markdown("---")
 birim_secimi = st.sidebar.selectbox(
@@ -241,6 +251,7 @@ uploaded_file = st.sidebar.file_uploader(
 
 gecmis_istatistik = {}
 gecmis_acil_istatistik = {}
+gecmis_kultur8_istatistik = {}
 otomatik_son_gun_nobetcileri = []
 
 if uploaded_file is not None:
@@ -293,6 +304,14 @@ if uploaded_file is not None:
                     acil_devir_val = 0
                 gecmis_acil_istatistik[p_name] = acil_devir_val
 
+                # Kültür 8s Vardiya Devri Okuma
+                try:
+                    kultur8_col_idx = 30 if offset == 1 else 29
+                    k8_devir_val = int(row.iloc[kultur8_col_idx])
+                except (ValueError, TypeError, IndexError):
+                    k8_devir_val = 0
+                gecmis_kultur8_istatistik[p_name] = k8_devir_val
+
         if "Aylık Görev Listesi" in xls.sheet_names:
             df_goreg = pd.read_excel(
                 xls, sheet_name="Aylık Görev Listesi", skiprows=2
@@ -305,7 +324,7 @@ if uploaded_file is not None:
                     ):
                         names = str(last_row[col_name]).split(",")
                         for n in names:
-                            clean_n = n.replace("(Acil)", "").strip().upper()
+                            clean_n = n.replace("(Acil)", "").replace("(8s Vardiya)", "").strip().upper()
                             if clean_n in nobetci_personeller:
                                 otomatik_son_gun_nobetcileri.append(clean_n)
 
@@ -336,6 +355,14 @@ def get_prev(p_name, category):
 def get_prev_acil(p_name):
     p_norm = tr_norm(p_name)
     for key, val in gecmis_acil_istatistik.items():
+        if tr_norm(key) == p_norm:
+            return val
+    return 0
+
+
+def get_prev_kultur8(p_name):
+    p_norm = tr_norm(p_name)
+    for key, val in gecmis_kultur8_istatistik.items():
         if tr_norm(key) == p_norm:
             return val
     return 0
@@ -546,19 +573,16 @@ def calculate_shift_hours(
     """Nöbet Tutulan Günün Net Hakediş Saatini Hesaplar."""
     dt = datetime.date(yil, ay, d)
 
-    # 1. Bizzat Arife/Yarım Gün Tutulan Nöbet -> 19 Saat
     if d in yarim_gun_tatil_gunleri:
         return 19
 
-    # 2. AYIN SON GÜNÜ KURALI (Net ve Kesin Kural: 1-5 gün arası 16s, 6-7 gün arası 24s)
     if d == gun_sayisi:
-        w = dt.weekday()  # 0: Pzt, 1: Sal, 2: Çar, 3: Per, 4: Cum, 5: Cmt, 6: Pzr
+        w = dt.weekday()
         if w in [5, 6]:
             return 24
         else:
             return 16
 
-    # 3. Normal Tatil veya Hafta Sonu Nöbeti
     if is_day_off(yil, ay, d, resmi_tatil_gunleri):
         if d < gun_sayisi:
             sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
@@ -568,7 +592,6 @@ def calculate_shift_hours(
         else:
             return 16
 
-    # 4. HAFTA İÇİ NORMAL NÖBET
     if (d + 1) in yarim_gun_tatil_gunleri:
         return 11
 
@@ -665,13 +688,16 @@ def generate_3_tab_excel(
     nobetci_personeller,
     tum_girilen_personeller,
     nobet_dict,
+    kultur_8s_dict,
     acil_nobet_dict,
     gecmis_istatistik,
     gecmis_acil_istatistik,
+    gecmis_kultur8_istatistik,
     gun_sayisi,
     birim_secimi,
     resmi_tatil_gunleri,
     yarim_gun_tatil_gunleri,
+    kultur_8s_tatil_gunleri,
     gecmis_ay_son_gun_nobetcileri,
 ):
     wb = openpyxl.Workbook()
@@ -735,10 +761,17 @@ def generate_3_tab_excel(
 
         pcr_list, mikro_list, kultur_list = [], [], []
         for p in nobetci_personeller:
-            if d in nobet_dict.get(p, set()):
-                p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
-                is_acil = d in acil_nobet_dict.get(p, set())
-                p_text = f"{p} (Acil)" if is_acil else p
+            p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
+            is_24 = d in nobet_dict.get(p, set())
+            is_8s = d in kultur_8s_dict.get(p, set())
+            is_acil = d in acil_nobet_dict.get(p, set())
+
+            if is_24 or is_8s:
+                p_text = p
+                if is_8s:
+                    p_text += " (8s Vardiya)"
+                elif is_acil:
+                    p_text += " (Acil)"
 
                 if p_unit == "PCR":
                     pcr_list.append(p_text)
@@ -764,7 +797,7 @@ def generate_3_tab_excel(
     ws1.column_dimensions["B"].width = 13
     ws1.column_dimensions["C"].width = 25
     ws1.column_dimensions["D"].width = 25
-    ws1.column_dimensions["E"].width = 25
+    ws1.column_dimensions["E"].width = 30
 
     # 2. SEKME: İSTATİSTİK & MESAİ YÜKÜ
     ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
@@ -858,6 +891,26 @@ def generate_3_tab_excel(
         sub_cell.fill = fill_green_bg
         sub_cell.alignment = align_center
         sub_cell.border = border_cell
+    col_counter += 3
+
+    # KÜLTÜR 8S VARDİYA SÜTUSLARI (OPSİYON A)
+    ws2.merge_cells(
+        start_row=1,
+        start_column=col_counter,
+        end_row=1,
+        end_column=col_counter + 2,
+    )
+    top_k8 = ws2.cell(row=1, column=col_counter, value="KÜLTÜR 8S VARDİYA")
+    top_k8.font = font_header
+    top_k8.fill = fill_header
+    top_k8.alignment = align_center
+
+    for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
+        sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
+        sub_cell.font = font_header
+        sub_cell.fill = fill_green_bg
+        sub_cell.alignment = align_center
+        sub_cell.border = border_cell
 
     for r_idx in [1, 2]:
         for c_idx in range(1, col_counter + 3):
@@ -927,6 +980,17 @@ def generate_3_tab_excel(
         acil_toplam = acil_devir + bu_ay_acil_saat
 
         for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_toplam]):
+            cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
+            cell.font = font_bold if idx == 2 else font_body
+            cell.alignment = align_center
+            cell.border = border_cell
+        c_i += 3
+
+        bu_ay_k8_sayisi = len(kultur_8s_dict.get(p, set()))
+        k8_devir = int(get_prev_kultur8(p))
+        k8_toplam = k8_devir + bu_ay_k8_sayisi
+
+        for idx, v in enumerate([k8_devir, bu_ay_k8_sayisi, k8_toplam]):
             cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
             cell.font = font_bold if idx == 2 else font_body
             cell.alignment = align_center
@@ -1002,6 +1066,7 @@ def generate_3_tab_excel(
         c_unit.border = border_cell
 
         p_shifts = nobet_dict.get(p, set())
+        p_k8_shifts = kultur_8s_dict.get(p, set())
         p_acils = acil_nobet_dict.get(p, set())
         p_row_dict = {}
 
@@ -1033,12 +1098,34 @@ def generate_3_tab_excel(
                     cell.font = font_24
                     if day in p_acils:
                         cell.fill = fill_bright_yellow
-                elif (day - 1) in p_shifts:
-                    if is_day_off(yil, ay, day, resmi_tatil_gunleri):
-                        cell.value = "T"
-                    else:
-                        cell.value = "Nİ"
-                        cell.font = font_ni
+                elif day in p_k8_shifts:
+                    cell.value = 8
+                    cell.font = font_bold
+                elif (day - 1) in p_shifts or (
+                    (day - 1) in p_k8_shifts
+                    and datetime.date(yil, ay, day - 1).weekday() == 5
+                ):
+                    # Cumartesi 8s vardiyasının takip eden mesai günü (Pazartesi / d-1 veya d-2 pzt) Nİ düşülür
+                    dt = datetime.date(yil, ay, day)
+                    prev_dt = datetime.date(yil, ay, day - 1)
+                    if (day - 1) in p_shifts:
+                        if day in off_days:
+                            cell.value = "T"
+                        else:
+                            cell.value = "Nİ"
+                            cell.font = font_ni
+                    elif (day - 1) in p_k8_shifts and prev_dt.weekday() == 5:
+                        cell.value = "T" if day in off_days else "Nİ"
+                        if cell.value == "Nİ":
+                            cell.font = font_ni
+                elif (
+                    datetime.date(yil, ay, day).weekday() == 0
+                    and (day - 2) in p_k8_shifts
+                    and datetime.date(yil, ay, day - 2).weekday() == 5
+                ):
+                    # Pazartesi günü için Cumartesi 8s mahsuplaşması
+                    cell.value = "Nİ"
+                    cell.font = font_ni
                 else:
                     if day in off_days:
                         cell.value = "T"
@@ -1078,7 +1165,6 @@ def generate_3_tab_excel(
             cell.alignment = align_center
             cell.border = border_cell
 
-    # --- PUANTAJ TABLOSU EN ALT SATIR: HESAPLANAN NÖBET SAATİ ---
     summary_r = 6 + len(tum_girilen_personeller)
     ws3.row_dimensions[summary_r].height = 20
 
@@ -1193,11 +1279,19 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
     else:
         model = cp_model.CpModel()
         x = {}
+        k8 = {}
 
+        # Nöbet Değişkenleri (24s)
         for p in nobetci_personeller:
             for d in range(gun_sayisi):
                 x[(p, d)] = model.NewBoolVar(f"x_{p}_{d}")
 
+        # Kültür 8s Vardiya Değişkenleri
+        for p in kultur_nobetcileri:
+            for d in range(gun_sayisi):
+                k8[(p, d)] = model.NewBoolVar(f"k8_{p}_{d}")
+
+        # --- 24S NÖBET SAYISI KISITLARI ---
         if birim_secimi == "Tüm Laboratuvar (Birleşik)":
             for d in range(gun_sayisi):
                 model.Add(
@@ -1215,9 +1309,28 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     sum(x[(p, d)] for p in nobetci_personeller) == gunluk_nobetci
                 )
 
+        # --- KÜLTÜR 8S VARDİYA GÜN KISITLARI ---
+        kultur_8s_gun_indeksleri = []
+        for d in range(gun_sayisi):
+            dt = datetime.date(yil, ay, d + 1)
+            # Cumartesiler VEYA seçilen Kültür 8s tatil günleri
+            if dt.weekday() == 5 or (d + 1) in kultur_8s_tatil_gunleri:
+                kultur_8s_gun_indeksleri.append(d)
+
+        for d in range(gun_sayisi):
+            if d in kultur_8s_gun_indeksleri and kultur_nobetcileri:
+                # O gün Kültür biriminden tam 1 kişi 8s vardiyasına gelecek
+                model.Add(sum(k8[(p, d)] for p in kultur_nobetcileri) == 1)
+            else:
+                for p in kultur_nobetcileri:
+                    model.Add(k8[(p, d)] == 0)
+
+        # --- MÜSAİTLİK VE MAZERET KISITLARI ---
         for p in nobetci_personeller:
             for d in izinler[p]:
                 model.Add(x[(p, d)] == 0)
+                if p in kultur_nobetcileri:
+                    model.Add(k8[(p, d)] == 0)
 
         for p in nobetci_personeller:
             for d in sabit_nobetler[p]:
@@ -1226,16 +1339,34 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         for p in gecmis_ay_son_gun_nobetcileri:
             if p in nobetci_personeller:
                 model.Add(x[(p, 0)] == 0)
+                if p in kultur_nobetcileri:
+                    model.Add(k8[(p, 0)] == 0)
 
+        # --- ÇAKIŞMA VE DİNLENME KISITLARI ---
         for p in nobetci_personeller:
             p_dinlenme = (
                 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
             )
-            for d in range(gun_sayisi - p_dinlenme):
-                model.Add(
-                    sum(x.get((p, d + k), 0) for k in range(p_dinlenme + 1))
-                    <= 1
-                )
+            for d in range(gun_sayisi):
+                if p in kultur_nobetcileri:
+                    # 1. Aynı gün hem 24s hem 8s YASAK
+                    model.Add(x[(p, d)] + k8[(p, d)] <= 1)
+
+                    # 2. Cuma (24s) -> Cumartesi (8s) YASAK (Nöbet ertesi dinlenme)
+                    if d > 0:
+                        model.Add(x[(p, d - 1)] + k8[(p, d)] <= 1)
+
+                    # 3. Cumartesi (8s) -> Pazar (24s) YASAK
+                    if d < gun_sayisi - 1:
+                        model.Add(k8[(p, d)] + x[(p, d + 1)] <= 1)
+
+                # Genel Dinlenme Aralığı
+                for k in range(1, p_dinlenme + 1):
+                    if d + k < gun_sayisi:
+                        model.Add(x[(p, d)] + x[(p, d + k)] <= 1)
+                        if p in kultur_nobetcileri:
+                            model.Add(x[(p, d)] + k8[(p, d + k)] <= 1)
+                            model.Add(k8[(p, d)] + x[(p, d + k)] <= 1)
 
         if persembe_pazar_yasagi:
             for d in range(gun_sayisi - 3):
@@ -1320,11 +1451,17 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             min_b_saat = model.NewIntVar(0, 1000, f"min_saat_{b_adi}")
             for p in b_personelleri:
                 bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
+                k8_saat_toplam = (
+                    sum(k8[(p, d)] * 8 for d in kultur_8s_gun_indeksleri)
+                    if p in kultur_nobetcileri
+                    else 0
+                )
                 model.Add(
                     bu_ay_saat
                     == sum(
                         x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi)
                     )
+                    + k8_saat_toplam
                 )
                 model.Add(bu_ay_saat <= max_b_saat)
                 model.Add(bu_ay_saat >= min_b_saat)
@@ -1350,7 +1487,21 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 model.Add(fark == max_kat - min_kat)
                 kategori_farklari.append(agirlik * fark)
 
-        # --- ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI (SOFT COST) ---
+        # KÜLTÜR 8S VARDİYA KENDİ İÇİNDE ADALET (Kültür Personelleri Arasında)
+        kultur8_farklari = []
+        if kultur_nobetcileri and kultur_8s_gun_indeksleri:
+            max_k8 = model.NewIntVar(0, 50, "max_k8")
+            min_k8 = model.NewIntVar(0, 50, "min_k8")
+            for p in kultur_nobetcileri:
+                bu_ay_k8 = sum(k8[(p, d)] for d in kultur_8s_gun_indeksleri)
+                kumulatif_k8 = get_prev_kultur8(p) + bu_ay_k8
+                model.Add(kumulatif_k8 <= max_k8)
+                model.Add(kumulatif_k8 >= min_k8)
+            diff_k8 = model.NewIntVar(0, 50, "diff_k8")
+            model.Add(diff_k8 == max_k8 - min_k8)
+            kultur8_farklari.append(diff_k8)
+
+        # ESNEK AY İÇİ YIĞILMA ÖNLENME PUANLAMASI
         yigilma_farklari = []
         yariyil = gun_sayisi // 2
         for p in nobetci_personeller:
@@ -1360,26 +1511,33 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
             model.AddAbsEquality(diff, n1 - n2)
             yigilma_farklari.append(diff)
 
-        # MUTLAK SAAT EŞİTLİĞİ BASTIRMASI (10 MİLYON KATSAYISI)
+        # OPTİMİZASYON HEDEFİ
         model.Minimize(
             10000000 * sum(saat_farklari)
+            + 50000 * sum(kultur8_farklari)
             + sum(kategori_farklari)
             + 100 * sum(yigilma_farklari)
         )
 
         solver = cp_model.CpSolver()
         solver.parameters.num_search_workers = 2
-        solver.parameters.max_time_in_seconds = 3.0
+        solver.parameters.max_time_in_seconds = 4.0
         status = solver.Solve(model)
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             nobet_dict = {p: set() for p in nobetci_personeller}
+            kultur_8s_dict = {p: set() for p in nobetci_personeller}
             acil_nobet_dict = {p: set() for p in nobetci_personeller}
 
             for d in range(gun_sayisi):
                 for p in nobetci_personeller:
                     if solver.Value(x[(p, d)]) == 1:
                         nobet_dict[p].add(d + 1)
+                    if (
+                        p in kultur_nobetcileri
+                        and solver.Value(k8[(p, d)]) == 1
+                    ):
+                        kultur_8s_dict[p].add(d + 1)
 
             # ACİL NÖBET DAĞITIM ALGORİTMASI
             bu_ay_acil_saat = {p: 0 for p in nobetci_personeller}
@@ -1437,12 +1595,19 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 pcr_list, mikro_list, kultur_list = [], [], []
 
                 for p in nobetci_personeller:
-                    if d in nobet_dict[p]:
-                        p_unit = TUM_PERSONEL_VERISI.get(p, {}).get(
-                            "birim", "Mikro"
-                        )
-                        is_acil = d in acil_nobet_dict[p]
-                        p_text = f"{p} (Acil)" if is_acil else p
+                    p_unit = TUM_PERSONEL_VERISI.get(p, {}).get(
+                        "birim", "Mikro"
+                    )
+                    is_24 = d in nobet_dict[p]
+                    is_8s = d in kultur_8s_dict[p]
+                    is_acil = d in acil_nobet_dict[p]
+
+                    if is_24 or is_8s:
+                        p_text = p
+                        if is_8s:
+                            p_text += " (8s Vardiya)"
+                        elif is_acil:
+                            p_text += " (Acil)"
 
                         if p_unit == "PCR":
                             pcr_list.append(p_text)
@@ -1485,6 +1650,13 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     ("ACİL NÖBET (SAAT)", "Devir"),
                     ("ACİL NÖBET (SAAT)", "Bu Ay"),
                     ("ACİL NÖBET (SAAT)", "Toplam"),
+                ]
+            )
+            columns_tuples.extend(
+                [
+                    ("KÜLTÜR 8S VARDİYA", "Devir"),
+                    ("KÜLTÜR 8S VARDİYA", "Bu Ay"),
+                    ("KÜLTÜR 8S VARDİYA", "Toplam"),
                 ]
             )
 
@@ -1541,6 +1713,14 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                     acil_devir + bu_ay_acil_saat_val
                 )
 
+                bu_ay_k8_val = len(kultur_8s_dict[p])
+                k8_devir = get_prev_kultur8(p)
+                row_dict[("KÜLTÜR 8S VARDİYA", "Devir")] = k8_devir
+                row_dict[("KÜLTÜR 8S VARDİYA", "Bu Ay")] = bu_ay_k8_val
+                row_dict[("KÜLTÜR 8S VARDİYA", "Toplam")] = (
+                    k8_devir + bu_ay_k8_val
+                )
+
                 istatistik_rows.append(row_dict)
 
             df_istatistik = pd.DataFrame(istatistik_rows, columns=multi_cols)
@@ -1553,6 +1733,9 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
 
                 p_row = {"Adı Soyadı": p, "Birim": p_birim}
+                p_shifts = nobet_dict.get(p, set())
+                p_k8_shifts = kultur_8s_dict.get(p, set())
+
                 for d in range(1, gun_sayisi + 1):
                     day_is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
 
@@ -1569,13 +1752,26 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                                 p_row[str(d)] = "T"
                             else:
                                 p_row[str(d)] = "Nİ"
-                        elif d in nobet_dict[p]:
+                        elif d in p_shifts:
                             p_row[str(d)] = "24"
-                        elif (d - 1) in nobet_dict[p]:
-                            if day_is_off:
-                                p_row[str(d)] = "T"
-                            else:
-                                p_row[str(d)] = "Nİ"
+                        elif d in p_k8_shifts:
+                            p_row[str(d)] = "8"
+                        elif (d - 1) in p_shifts or (
+                            (d - 1) in p_k8_shifts
+                            and datetime.date(yil, ay, d - 1).weekday() == 5
+                        ):
+                            dt = datetime.date(yil, ay, d)
+                            prev_dt = datetime.date(yil, ay, d - 1)
+                            if (d - 1) in p_shifts:
+                                p_row[str(d)] = "T" if day_is_off else "Nİ"
+                            elif (d - 1) in p_k8_shifts and prev_dt.weekday() == 5:
+                                p_row[str(d)] = "T" if day_is_off else "Nİ"
+                        elif (
+                            datetime.date(yil, ay, d).weekday() == 0
+                            and (d - 2) in p_k8_shifts
+                            and datetime.date(yil, ay, d - 2).weekday() == 5
+                        ):
+                            p_row[str(d)] = "Nİ"
                         else:
                             if day_is_off:
                                 p_row[str(d)] = "T"
@@ -1613,13 +1809,16 @@ if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
                 nobetci_personeller,
                 tum_girilen_personeller,
                 nobet_dict,
+                kultur_8s_dict,
                 acil_nobet_dict,
                 gecmis_istatistik,
                 gecmis_acil_istatistik,
+                gecmis_kultur8_istatistik,
                 gun_sayisi,
                 birim_secimi,
                 resmi_tatil_gunleri,
                 yarim_gun_tatil_gunleri,
+                kultur_8s_tatil_gunleri,
                 gecmis_ay_son_gun_nobetcileri,
             )
 
@@ -1662,7 +1861,7 @@ if st.session_state.hesaplanan_sonuc is not None:
         st.dataframe(sonuc["df_liste"], use_container_width=True, height=450)
 
     with tab2:
-        st.subheader("📈 Personel Mesai Yükü & Acil İstatistiği")
+        st.subheader("📈 Personel Mesai Yükü & Acil / Kültür 8s İstatistiği")
         st.dataframe(sonuc["df_istatistik"], use_container_width=True)
 
     with tab3:
