@@ -21,7 +21,7 @@ st.set_page_config(
 if "hesaplanan_sonuc" not in st.session_state:
     st.session_state.hesaplanan_sonuc = None
 
-# --- TAM PERSONEL VERİTABANI (Birim ve Muafiyet) ---
+# --- TAM PERSONEL VERİTABANI ---
 TUM_PERSONEL_VERISI = {
     "ÖZGÜR SARSILMAZ": {"birim": "Mikro", "muaf": False},
     "AYSEL BOZAN": {"birim": "Mikro", "muaf": True},
@@ -96,13 +96,7 @@ st.markdown(
 )
 
 tr_gunler = {
-    0: "Pazartesi",
-    1: "Salı",
-    2: "Çarşamba",
-    3: "Perşembe",
-    4: "Cuma",
-    5: "Cumartesi",
-    6: "Pazar",
+    0: "Pazartesi", 1: "Salı", 2: "Çarşamba", 3: "Perşembe", 4: "Cuma", 5: "Cumartesi", 6: "Pazar",
 }
 
 def tr_norm(text):
@@ -122,7 +116,11 @@ def tr_norm(text):
 st.sidebar.title("🏥 Mikrobiyoloji Lab.")
 secilen_modul = st.sidebar.radio(
     "📌 Lütfen İşlem Yapılacak Modülü Seçiniz:",
-    ["1. Personel Nöbet & Puantaj", "2. Asistan Dr. Çalışma Listesi"]
+    [
+        "1. Personel Nöbet & Puantaj",
+        "2. Uzman Dr. Çalışma Listesi",
+        "3. Asistan Dr. Çalışma Listesi"
+    ]
 )
 st.sidebar.markdown("---")
 
@@ -335,32 +333,24 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 return val
         return 0
 
-    # Mazeret & Sabit Nöbet Girişleri
+    # Mazeret & Sabit Nöbet
     st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
-
     if "mazeret_satir_sayisi" not in st.session_state:
         st.session_state.mazeret_satir_sayisi = 1
 
-    def mazeret_satir_ekle():
-        st.session_state.mazeret_satir_sayisi += 1
-
+    def mazeret_satir_ekle(): st.session_state.mazeret_satir_sayisi += 1
     def mazeret_satir_cikar():
-        if st.session_state.mazeret_satir_sayisi > 1:
-            st.session_state.mazeret_satir_sayisi -= 1
+        if st.session_state.mazeret_satir_sayisi > 1: st.session_state.mazeret_satir_sayisi -= 1
 
     izinler = {p: [] for p in nobetci_personeller}
     sabit_nobetler = {p: [] for p in nobetci_personeller}
-    toplam_izin_sayisi = 0
-    toplam_sabit_sayisi = 0
+    toplam_izin_sayisi, toplam_sabit_sayisi = 0, 0
 
     for m_idx in range(st.session_state.mazeret_satir_sayisi):
         c1, c2, c3 = st.columns([1.2, 1.8, 1.8])
-        with c1:
-            p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
-        with c2:
-            selected_days = st.multiselect(f"Mazeret / İzin Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}", placeholder="Gün seçin...")
-        with c3:
-            selected_sabit_days = st.multiselect(f"Sabit Nöbet Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}", placeholder="Gün seçin...")
+        with c1: p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
+        with c2: selected_days = st.multiselect(f"Mazeret / İzin Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}")
+        with c3: selected_sabit_days = st.multiselect(f"Sabit Nöbet Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}")
 
         if p_secilen != "Seçiniz...":
             izinler[p_secilen].extend([d - 1 for d in selected_days])
@@ -369,76 +359,55 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             toplam_sabit_sayisi += len(selected_sabit_days)
 
     col_m_btn1, col_m_btn2, _ = st.columns([1.2, 1.2, 3.6])
-    with col_m_btn1:
-        st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
-    with col_m_btn2:
-        st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
+    with col_m_btn1: st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
+    with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Acil Nöbetçi Girişleri
+    # Acil Nöbet Girişleri
     st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
-    if "acil_satir_sayisi" not in st.session_state:
-        st.session_state.acil_satir_sayisi = 1
-
-    def acil_satir_ekle():
-        st.session_state.acil_satir_sayisi += 1
-
+    if "acil_satir_sayisi" not in st.session_state: st.session_state.acil_satir_sayisi = 1
+    def acil_satir_ekle(): st.session_state.acil_satir_sayisi += 1
     def acil_satir_cikar():
-        if st.session_state.acil_satir_sayisi > 1:
-            st.session_state.acil_satir_sayisi -= 1
+        if st.session_state.acil_satir_sayisi > 1: st.session_state.acil_satir_sayisi -= 1
 
     sabit_acil_nobetler = {p: [] for p in nobetci_personeller}
     toplam_sabit_acil_sayisi = 0
 
     for a_idx in range(st.session_state.acil_satir_sayisi):
         c1, c2 = st.columns([1.5, 3.3])
-        with c1:
-            p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
-        with c2:
-            selected_acil_days = st.multiselect(f"Sabit Acil Nöbet Günleri #{a_idx+1}:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}", placeholder="Gün seçin...")
+        with c1: p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
+        with c2: selected_acil_days = st.multiselect(f"Sabit Acil Nöbet Günleri #{a_idx+1}:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}")
 
         if p_acil_secilen != "Seçiniz...":
             sabit_acil_nobetler[p_acil_secilen].extend(selected_acil_days)
             toplam_sabit_acil_sayisi += len(selected_acil_days)
 
     col_a_btn1, col_a_btn2, _ = st.columns([1.2, 1.2, 3.6])
-    with col_a_btn1:
-        st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
-    with col_a_btn2:
-        st.button("➖ Acil Satırı Sil", on_click=acil_satir_cikar)
+    with col_a_btn1: st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
+    with col_a_btn2: st.button("➖ Acil Satırı Sil", on_click=acil_satir_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Kişiler Arası Nöbet Mesafe
+    # Kişiler Arası Kısıtlar
     st.markdown('<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı Kuralları</div>', unsafe_allow_html=True)
-    if "kisi_kisit_sayisi" not in st.session_state:
-        st.session_state.kisi_kisit_sayisi = 1
-
-    def kisit_ekle():
-        st.session_state.kisi_kisit_sayisi += 1
-
+    if "kisi_kisit_sayisi" not in st.session_state: st.session_state.kisi_kisit_sayisi = 1
+    def kisit_ekle(): st.session_state.kisi_kisit_sayisi += 1
     def kisit_cikar():
-        if st.session_state.kisi_kisit_sayisi > 1:
-            st.session_state.kisi_kisit_sayisi -= 1
+        if st.session_state.kisi_kisit_sayisi > 1: st.session_state.kisi_kisit_sayisi -= 1
 
     kisi_kisitlari = []
     for k_idx in range(st.session_state.kisi_kisit_sayisi):
         c1, c2, c3 = st.columns([1.2, 1, 2])
-        with c1:
-            p_ana = st.selectbox(f"Ana Personel #{k_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
-        with c2:
-            min_aralik = st.number_input(f"Min. Mesafe (Gün) #{k_idx+1}:", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
-        with c3:
-            p_yasakli_list = st.multiselect(f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
+        with c1: p_ana = st.selectbox(f"Ana Personel #{k_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
+        with c2: min_aralik = st.number_input(f"Min. Mesafe (Gün) #{k_idx+1}:", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
+        with c3: p_yasakli_list = st.multiselect(f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
         if p_ana != "Seçiniz..." and p_yasakli_list:
             kisi_kisitlari.append({"ana": p_ana, "aralik": min_aralik, "yasaklilar": p_yasakli_list})
 
     col_btn1, col_btn2, _ = st.columns([1, 1, 4])
-    with col_btn1:
-        st.button("➕ Yeni Kısıt Ekle", on_click=kisit_ekle)
-    with col_btn2:
-        st.button("➖ Kısıt Sil", on_click=kisit_cikar)
+    with col_btn1: st.button("➕ Yeni Kısıt Ekle", on_click=kisit_ekle)
+    with col_btn2: st.button("➖ Kısıt Sil", on_click=kisit_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
     m1, m2, m3, m4, m5, m6 = st.columns(6)
@@ -458,10 +427,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         toplam_saat = 0
         for d in range(1, gun_sayisi + 1):
             if not is_day_off(yil, ay, d, resmi_tatil_gunleri):
-                if d in yarim_gun_tatil_gunleri:
-                    toplam_saat += 5
-                else:
-                    toplam_saat += 8
+                if d in yarim_gun_tatil_gunleri: toplam_saat += 5
+                else: toplam_saat += 8
         return toplam_saat
 
     def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
@@ -742,9 +709,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     elif (day - 1) in p_shifts:
                         cell.value = "T" if day in off_days else "Nİ"
                         if cell.value == "Nİ": cell.font = font_ni
-                    elif dt.weekday() == 0 and (day - 2) in p_k8_shifts and datetime.date(yil, ay, day - 2).weekday() == 5:
+                    elif dt.weekday() == 0 and (d - 2) in p_k8_shifts and datetime.date(yil, ay, d - 2).weekday() == 5:
                         cell.value, cell.font = "Nİ", font_ni
-                    elif (day - 1) in p_k8_shifts and datetime.date(yil, ay, day - 1).weekday() == 5: cell.value = "T"
+                    elif (day - 1) in p_k8_shifts and datetime.date(yil, ay, d - 1).weekday() == 5: cell.value = "T"
                     else:
                         if day in off_days: cell.value = "T"
                         elif day in yarim_gun_tatil_gunleri: cell.value, cell.font = 5, font_body
@@ -1163,14 +1130,128 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
 
 # ==========================================
-# 2. MODÜL: ASİSTAN DOKTOR ÇALIŞMA LİSTESİ
+# 2. MODÜL: UZMAN DOKTOR ÇALIŞMA LİSTESİ
 # ==========================================
-elif secilen_modul == "2. Asistan Dr. Çalışma Listesi":
+elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
+    st.markdown(
+        """
+    <div class="header-box">
+        <h1>👨‍⚕️ Uzman Doktor Çalışma ve Nöbet Kodlama Sistemi</h1>
+        <p>Klinik Bazlı Çalışma Çizelgesinden Hekim Bazlı L-Kodlu (L-1 - L-20) Çalışma Listesi Oluşturma</p>
+        <div class="header-imza">✍️ Özgür SARSILMAZ</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    uzman_doc_mapping = {
+        'Ali Osman ŞEKERCİOĞLU': 'A.O.Şekercioğlu',
+        'ALPER KANDİŞER': 'A.Kandişer',
+        'Aydan KARAGÜL': 'A.Karagül',
+        'Ayşe SARI': 'A.Sarı',
+        'C.Aylin ERMAN DALOĞLU': 'C.A.E.Daloğlu',
+        'Çiğdem YILDIRIM': 'Ç.Yıldırım',
+        'Ebru KANDIRALI DUYGUN': 'E.K.Duygun',
+        'Gül AYDIN TIĞLI': 'G.A.Tığlı',
+        'H.Nevgün ÖZEN': 'H.N.Özen',
+        'Halil ER': 'H.Er',
+        'Halil MANSUROĞLU': 'H.Mansuroğlu',
+        'Koray ÖNCEL': 'K.Öncel',
+        'Nilgün GÜR': 'N.Gür',
+        'Özgül ÇETİNKAYA': 'Ö.Çetinkaya',
+        'Özgür DOĞAN': 'Ö.Doğan',
+        'Özlem KOCA': 'Ö.Koca',
+        'Yeşim ÇEKİN': 'Y.Çekin',
+        'Zübeyde ERES SARITAŞ': 'Z.E.Sarıtaş'
+    }
+
+    st.subheader("📂 Uzman Doktor Çalışma Listesi Excel Dosyası Yükleme")
+    uploaded_uzman_file = st.file_uploader("Uzman Dr. Çalışma Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"], key="uzman_uploader")
+
+    if uploaded_uzman_file is not None:
+        try:
+            wb = openpyxl.load_workbook(uploaded_uzman_file)
+            
+            if 'LAB.KLİNİK BAZLI ÇALIŞMA LİST.' not in wb.sheetnames or 'LAB.HEKİM BAZLI ÇALIŞMA LİST' not in wb.sheetnames:
+                st.error("❌ Hata: Yüklenen dosyada 'LAB.KLİNİK BAZLI ÇALIŞMA LİST.' veya 'LAB.HEKİM BAZLI ÇALIŞMA LİST' sekmeleri bulunamadı.")
+            else:
+                sh_klinik = wb['LAB.KLİNİK BAZLI ÇALIŞMA LİST.']
+                sh_hekim = wb['LAB.HEKİM BAZLI ÇALIŞMA LİST']
+
+                uzman_schedule = {day: {} for day in range(1, 32)}
+
+                for day in range(1, 32):
+                    r = day + 7 # Row 8 = Oct 1
+                    for c in range(3, 23): # Col C to V (L-1 to L-20)
+                        code = sh_klinik.cell(row=6, column=c).value # e.g. L-1
+                        doc = sh_klinik.cell(row=r, column=c).value
+                        if doc and str(doc).strip():
+                            doc_str = str(doc).strip()
+                            if doc_str not in uzman_schedule[day]:
+                                uzman_schedule[day][doc_str] = []
+                            uzman_schedule[day][doc_str].append(code)
+
+                # Nöbet (L-14) ve Nöbet İzni (L-15) Önceliği ile Kod Atama
+                uzman_result_grid = {}
+                for full_name, short_name in uzman_doc_mapping.items():
+                    uzman_result_grid[full_name] = {}
+                    for day in range(1, 32):
+                        codes = uzman_schedule[day].get(short_name, [])
+                        if not codes: final_code = ""
+                        elif 'L-14' in codes: final_code = 'L-14'
+                        elif 'L-15' in codes: final_code = 'L-15'
+                        else: final_code = codes[0]
+                        uzman_result_grid[full_name][day] = final_code
+
+                # Excel Sekmesini Güncelleme
+                for r in range(9, 27):
+                    full_name = str(sh_hekim.cell(row=r, column=2).value).strip()
+                    if full_name in uzman_result_grid:
+                        for day in range(1, 32):
+                            col_idx = day + 4 # Day 1 = Col E (5)
+                            val = uzman_result_grid[full_name][day]
+                            sh_hekim.cell(row=r, column=col_idx).value = val if val else None
+
+                output_uzman = BytesIO()
+                wb.save(output_uzman)
+                output_uzman.seek(0)
+
+                # Tablo Görünümü Hazırlama
+                uzman_grid_rows = []
+                for doc_n in uzman_doc_mapping:
+                    row_data = {"Hekim Adı Soyadı": doc_n}
+                    for d in range(1, 32):
+                        v = uzman_result_grid[doc_n][d]
+                        row_data[str(d)] = v if v else "-"
+                    uzman_grid_rows.append(row_data)
+
+                df_uzman_preview = pd.DataFrame(uzman_grid_rows)
+
+                st.success("✅ Uzman Doktor çalışma listesi başarıyla L-kodlarına (L-1 - L-20) dönüştürüldü ve kodlandı!")
+                
+                st.subheader("📊 Kodlanmış Uzman Doktor Çizelgesi Önizleme")
+                st.dataframe(df_uzman_preview, use_container_width=True)
+
+                st.markdown("---")
+                st.subheader("📥 Kodlanmış Excel Dosyasını İndir")
+                b64_uzman = base64.b64encode(output_uzman.getvalue()).decode()
+                uzman_file_name = "Uzman_Dr_Calisma_Listesi_10.2026_Kodlanmis.xlsx"
+                href_uzman = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_uzman}" download="{uzman_file_name}" class="direct-download-btn">📥 Kodlanmış Uzman Dr. Excel Dosyasını İndir (.xlsx)</a>'
+                st.markdown(href_uzman, unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"❌ Dosya işlenirken bir hata oluştu: {e}")
+
+
+# ==========================================
+# 3. MODÜL: ASİSTAN DOKTOR ÇALIŞMA LİSTESİ
+# ==========================================
+elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
     st.markdown(
         """
     <div class="header-box">
         <h1>🧑‍⚕️ Asistan Doktor Çalışma ve Nöbet Kodlama Sistemi</h1>
-        <p>Klinik Bazlı Çalışma Çizelgesinden Hekim Bazlı L-Kodlu Çalışma Listesi Oluşturma</p>
+        <p>Klinik Bazlı Çalışma Çizelgesinden Hekim Bazlı L-Kodlu (L-1 - L-11) Çalışma Listesi Oluşturma</p>
         <div class="header-imza">✍️ Özgür SARSILMAZ</div>
     </div>
     """,
@@ -1195,7 +1276,7 @@ elif secilen_modul == "2. Asistan Dr. Çalışma Listesi":
         return any(raw_name == t.lower() for t in targets)
 
     st.subheader("📂 Asistan Doktor Çalışma Listesi Excel Dosyası Yükleme")
-    uploaded_as_file = st.file_uploader("As.Dr. Çalışma Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"])
+    uploaded_as_file = st.file_uploader("As.Dr. Çalışma Listesi Excel Dosyasını Yükleyin (.xlsx)", type=["xlsx"], key="asistan_uploader")
 
     if uploaded_as_file is not None:
         try:
@@ -1207,7 +1288,6 @@ elif secilen_modul == "2. Asistan Dr. Çalışma Listesi":
                 sh_klinik_as = wb['LAB.KLİNİK BAZLI ÇALIŞMA LİST.']
                 sh_hekim_as = wb['LAB.HEKİM BAZLI ÇALIŞMA LİST']
 
-                # Gün ve Nöbet Matrisini Oluştur
                 as_schedule = {day: {} for day in range(1, 32)}
                 
                 for day in range(1, 32):
