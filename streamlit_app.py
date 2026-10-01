@@ -447,31 +447,58 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
     def calculate_personel_puantaj_metrikleri(p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri):
         aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-        toplam_calisma, norm_gece, norm_normal, risk_gece, risk_normal = 0, 0, 0, 0, 0
+
+        toplam_calisma = 0
+        norm_gece = 0
+        norm_normal = 0
+        risk_gece = 0
+        risk_normal = 0
 
         for d in range(1, gun_sayisi + 1):
             val = str(p_row_dict.get(str(d), "")).strip()
-            if val in ["8", "5", "16", "19", "11", "24"]: toplam_calisma += int(val)
-            if val == "Nİ": toplam_calisma -= 8
+
+            if val in ["8", "5", "16", "19", "11", "24"]:
+                toplam_calisma += int(val)
+
+            if val == "Nİ":
+                toplam_calisma -= 8
+
             if val == "24":
                 is_risk = d in acil_days_set
                 n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-                g_saat = 12 if n_saat in [16, 24] else (8 if n_saat in [8, 11] else (12 if n_saat == 19 else min(12, n_saat)))
+
+                if n_saat in [16, 24]:
+                    g_saat = 12
+                elif n_saat in [8, 11]:
+                    g_saat = 8
+                elif n_saat == 19:
+                    g_saat = 12
+                else:
+                    g_saat = min(12, n_saat)
+
                 gunduz_saat = max(0, n_saat - g_saat)
+
                 if is_risk:
                     risk_gece += g_saat
                     risk_normal += gunduz_saat
                 else:
                     norm_gece += g_saat
                     norm_normal += gunduz_saat
+
             elif val == "8" and d in kultur_8s_tatil_gunleri:
                 norm_normal += 8
 
-        fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+        # 🎯 OK İŞARETLİ ALAN DÜZELTİLDİ: Kırmızı kutunun (4 nöbet türünün) toplamı olarak ayarlandı[cite: 4]
+        fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
+
         return {
-            "Toplam Çalışma Saati": toplam_calisma, "Aylık Çalışma Saati": aylik_hedef_saat,
-            "Fazla Nöbet Saati": fazla_nobet, "Normal_Gece": norm_gece,
-            "Normal_Normal": norm_normal, "Riskli_Gece": risk_gece, "Riskli_Normal": risk_normal,
+            "Toplam Çalışma Saati": toplam_calisma,
+            "Aylık Çalışma Saati": aylik_hedef_saat,
+            "Fazla Nöbet Saati": fazla_nobet,
+            "Normal_Gece": norm_gece,
+            "Normal_Normal": norm_normal,
+            "Riskli_Gece": risk_gece,
+            "Riskli_Normal": risk_normal,
         }
 
     def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_nobetcileri):
@@ -1002,6 +1029,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     })
                 df_liste = pd.DataFrame(liste_data)
 
+                # 🎯 DÜZELTME: gunler_listesi değişkeni eklendi (NameError önlendi)[cite: 5]
+                gunler_listesi = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
                 columns_tuples = [("AD SOYAD", ""), ("Birim", "")]
                 for g in gunler_listesi: columns_tuples.extend([(g, "Devir"), (g, "Bu Ay"), (g, "Toplam")])
                 columns_tuples.extend([("T.NöbetSaati", ""), ("TOPLAM NÖBET", "")])
