@@ -211,7 +211,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     ]
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🛡️️ Genel Kural Kurulumu")
+    st.sidebar.subheader("🛡 Genel Kural Kurulumu")
     gunluk_nobetci = st.sidebar.number_input(
         "Birim Başı Günlük Nöbetçi İhtiyacı:",
         min_value=1,
@@ -447,126 +447,125 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         return toplam_saat
 
     def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
-    aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+        aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-    toplam_calisma = 0
-    norm_gece = 0
-    norm_normal = 0
-    risk_gece = 0
-    risk_normal = 0
+        toplam_calisma = 0
+        norm_gece = 0
+        norm_normal = 0
+        risk_gece = 0
+        risk_normal = 0
 
-    # 1. Ham Nöbet Saatlerinin Dağıtılması
-    for d in range(1, gun_sayisi + 1):
-        val = str(p_row_dict.get(str(d), "")).strip()
+        # 1. Ham Nöbet Saatlerinin Dağıtılması
+        for d in range(1, gun_sayisi + 1):
+            val = str(p_row_dict.get(str(d), "")).strip()
 
-        if val in ["8", "5", "16", "19", "11", "24"]:
-            toplam_calisma += int(val)
+            if val in ["8", "5", "16", "19", "11", "24"]:
+                toplam_calisma += int(val)
 
-        dt = datetime.date(yil, ay, d)
-        weekday = dt.weekday()
-        is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
-        is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else False
-        is_risk = d in acil_days_set
+            dt = datetime.date(yil, ay, d)
+            weekday = dt.weekday()
+            is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
+            is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else False
+            is_risk = d in acil_days_set
 
-        if val == "24":
-            if d == 5 and d in yarim_gun_tatil_gunleri:
-                g_saat, n_saat = 8, 3
-            elif d in yarim_gun_tatil_gunleri:
-                g_saat, n_saat = 12, 7
-            elif d == gun_sayisi and not is_next_day_off:
-                g_saat, n_saat = 12, 4
-            elif is_off:
-                if is_next_day_off:
+            if val == "24":
+                if d == 5 and d in yarim_gun_tatil_gunleri:
+                    g_saat, n_saat = 8, 3
+                elif d in yarim_gun_tatil_gunleri:
+                    g_saat, n_saat = 12, 7
+                elif d == gun_sayisi and not is_next_day_off:
+                    g_saat, n_saat = 12, 4
+                elif is_off:
+                    if is_next_day_off:
+                        g_saat, n_saat = 12, 12
+                    else:
+                        g_saat, n_saat = 12, 4
+                elif weekday in [0, 1, 2, 3]:
+                    g_saat, n_saat = 8, 0
+                elif weekday in [4, 6]:
+                    g_saat, n_saat = 12, 4
+                elif weekday == 5:
                     g_saat, n_saat = 12, 12
                 else:
                     g_saat, n_saat = 12, 4
-            elif weekday in [0, 1, 2, 3]:
-                g_saat, n_saat = 8, 0
-            elif weekday in [4, 6]:
-                g_saat, n_saat = 12, 4
-            elif weekday == 5:
-                g_saat, n_saat = 12, 12
+
+                if is_risk:
+                    risk_gece += g_saat
+                    risk_normal += n_saat
+                else:
+                    norm_gece += g_saat
+                    norm_normal += n_saat
+
+            elif val == "8" and d in kultur_8s_tatil_gunleri:
+                norm_normal += 8
+
+        # 2. Akıllı Devir Nİ Mahsuplaşması
+        is_devir_normal = p_name in gecmis_ay_son_gun_normal
+        is_devir_acil = p_name in gecmis_ay_son_gun_acil
+
+        if is_devir_normal or is_devir_acil:
+            dusulecek_saat = 8
+
+            if is_devir_acil:
+                dusulen_norm_gece = min(4, risk_gece)
+                risk_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
+
+                dusulen_norm_normal = min(4, risk_normal)
+                risk_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
+
+                if dusulecek_saat > 0 and risk_gece > 0:
+                    ek_dusu = min(dusulecek_saat, risk_gece)
+                    risk_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
+
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, norm_gece)
+                    norm_gece -= d_gece
+                    dusulecek_saat -= d_gece
+
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, norm_normal)
+                    norm_normal -= d_norm
+                    dusulecek_saat -= d_norm
+
             else:
-                g_saat, n_saat = 12, 4
+                dusulen_norm_gece = min(4, norm_gece)
+                norm_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
 
-            if is_risk:
-                risk_gece += g_saat
-                risk_normal += n_saat
-            else:
-                norm_gece += g_saat
-                norm_normal += n_saat
+                dusulen_norm_normal = min(4, norm_normal)
+                norm_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
 
-        elif val == "8" and d in kultur_8s_tatil_gunleri:
-            # Sadece resmi tatillerde tutulan manuel Kültür 8s vardiyası nöbet saatine eklenir
-            norm_normal += 8
+                if dusulecek_saat > 0 and norm_gece > 0:
+                    ek_dusu = min(dusulecek_saat, norm_gece)
+                    norm_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
 
-    # 2. Akıllı Devir Nİ Mahsuplaşması
-    is_devir_normal = p_name in gecmis_ay_son_gun_normal
-    is_devir_acil = p_name in gecmis_ay_son_gun_acil
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, risk_gece)
+                    risk_gece -= d_gece
+                    dusulecek_saat -= d_gece
 
-    if is_devir_normal or is_devir_acil:
-        dusulecek_saat = 8
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, risk_normal)
+                    risk_normal -= d_norm
+                    dusulecek_saat -= d_norm
 
-        if is_devir_acil:
-            dusulen_norm_gece = min(4, risk_gece)
-            risk_gece -= dusulen_norm_gece
-            dusulecek_saat -= dusulen_norm_gece
+        # Fazla Nöbet Saati = Gerçek Nöbet Hakedişlerinin Toplamı
+        fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
 
-            dusulen_norm_normal = min(4, risk_normal)
-            risk_normal -= dusulen_norm_normal
-            dusulecek_saat -= dusulen_norm_normal
-
-            if dusulecek_saat > 0 and risk_gece > 0:
-                ek_dusu = min(dusulecek_saat, risk_gece)
-                risk_gece -= ek_dusu
-                dusulecek_saat -= ek_dusu
-
-            if dusulecek_saat > 0:
-                d_gece = min(dusulecek_saat, norm_gece)
-                norm_gece -= d_gece
-                dusulecek_saat -= d_gece
-
-            if dusulecek_saat > 0:
-                d_norm = min(dusulecek_saat, norm_normal)
-                norm_normal -= d_norm
-                dusulecek_saat -= d_norm
-
-        else:
-            dusulen_norm_gece = min(4, norm_gece)
-            norm_gece -= dusulen_norm_gece
-            dusulecek_saat -= dusulen_norm_gece
-
-            dusulen_norm_normal = min(4, norm_normal)
-            norm_normal -= dusulen_norm_normal
-            dusulecek_saat -= dusulen_norm_normal
-
-            if dusulecek_saat > 0 and norm_gece > 0:
-                ek_dusu = min(dusulecek_saat, norm_gece)
-                norm_gece -= ek_dusu
-                dusulecek_saat -= ek_dusu
-
-            if dusulecek_saat > 0:
-                d_gece = min(dusulecek_saat, risk_gece)
-                risk_gece -= d_gece
-                dusulecek_saat -= d_gece
-
-            if dusulecek_saat > 0:
-                d_norm = min(dusulecek_saat, risk_normal)
-                risk_normal -= d_norm
-                dusulecek_saat -= d_norm
-
-    # DÜZELTME: Fazla Nöbet Saati = Gerçek Tutulan/Hakedilen Nöbet Saatlerinin Toplamı
-    fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
-
-    return {
-        "Toplam Çalışma Saati": toplam_calisma,
-        "Aylık Çalışma Saati": aylik_hedef_saat,
-        "Fazla Nöbet Saati": fazla_nobet,
-        "Normal_Gece": norm_gece,
-        "Normal_Normal": norm_normal,
-        "Riskli_Gece": risk_gece,
-        "Riskli_Normal": risk_normal,
-    }
+        return {
+            "Toplam Çalışma Saati": toplam_calisma,
+            "Aylık Çalışma Saati": aylik_hedef_saat,
+            "Fazla Nöbet Saati": fazla_nobet,
+            "Normal_Gece": norm_gece,
+            "Normal_Normal": norm_normal,
+            "Riskli_Gece": risk_gece,
+            "Riskli_Normal": risk_normal,
+        }
 
     def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
         wb = openpyxl.Workbook()
@@ -1515,7 +1514,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
         ay_adlari_tr = {
             1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
-            7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+            7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
         }
         ilgili_ay_str = f"{ay_adlari_tr[egit_ay]} {egit_yil}"
 
