@@ -334,53 +334,24 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 return val
         return 0
 
-   # ---------------------------------------------------------
-    # 1. Mazeret & Sabit Nöbet Girişleri (Aradan Silme Destekli)
-    # ---------------------------------------------------------
+    # Mazeret & Sabit Nöbet
     st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
-    
-    if "mazeret_listesi" not in st.session_state:
-        st.session_state.mazeret_listesi = [{"personel": "Seçiniz...", "izinler": [], "sabitler": []}]
+    if "mazeret_satir_sayisi" not in st.session_state:
+        st.session_state.mazeret_satir_sayisi = 1
 
-    def mazeret_satir_ekle():
-        st.session_state.mazeret_listesi.append({"personel": "Seçiniz...", "izinler": [], "sabitler": []})
+    def mazeret_satir_ekle(): st.session_state.mazeret_satir_sayisi += 1
+    def mazeret_satir_cikar():
+        if st.session_state.mazeret_satir_sayisi > 1: st.session_state.mazeret_satir_sayisi -= 1
 
     izinler = {p: [] for p in nobetci_personeller}
     sabit_nobetler = {p: [] for p in nobetci_personeller}
     toplam_izin_sayisi, toplam_sabit_sayisi = 0, 0
 
-    for m_idx, m_data in enumerate(st.session_state.mazeret_listesi):
-        c1, c2, c3, c4 = st.columns([1.5, 2, 2, 0.4])
-        
-        with c1:
-            p_opts = ["Seçiniz..."] + nobetci_personeller
-            p_idx = p_opts.index(m_data["personel"]) if m_data["personel"] in p_opts else 0
-            p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=p_opts, index=p_idx, key=f"m_personel_{m_idx}")
-            st.session_state.mazeret_listesi[m_idx]["personel"] = p_secilen
-
-        with c2:
-            selected_days = st.multiselect(
-                f"Mazeret / İzin Günleri #{m_idx+1}:",
-                options=gun_secenekleri,
-                default=[d for d in m_data["izinler"] if d in gun_secenekleri],
-                key=f"m_leave_{m_idx}"
-            )
-            st.session_state.mazeret_listesi[m_idx]["izinler"] = selected_days
-
-        with c3:
-            selected_sabit_days = st.multiselect(
-                f"Sabit Nöbet Günleri #{m_idx+1}:",
-                options=gun_secenekleri,
-                default=[d for d in m_data["sabitler"] if d in gun_secenekleri],
-                key=f"m_forced_{m_idx}"
-            )
-            st.session_state.mazeret_listesi[m_idx]["sabitler"] = selected_sabit_days
-
-        with c4:
-            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("❌", key=f"btn_m_sil_{m_idx}", help="Bu satırı sil"):
-                st.session_state.mazeret_listesi.pop(m_idx)
-                st.rerun()
+    for m_idx in range(st.session_state.mazeret_satir_sayisi):
+        c1, c2, c3 = st.columns([1.2, 1.8, 1.8])
+        with c1: p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
+        with c2: selected_days = st.multiselect(f"Mazeret / İzin Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}")
+        with c3: selected_sabit_days = st.multiselect(f"Sabit Nöbet Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}")
 
         if p_secilen != "Seçiniz...":
             izinler[p_secilen].extend([d - 1 for d in selected_days])
@@ -388,123 +359,56 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             toplam_izin_sayisi += len(selected_days)
             toplam_sabit_sayisi += len(selected_sabit_days)
 
-    col_m_btn1, _ = st.columns([1.8, 4.2])
-    with col_m_btn1:
-        st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
+    col_m_btn1, col_m_btn2, _ = st.columns([1.2, 1.2, 3.6])
+    with col_m_btn1: st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
+    with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
-    # 2. Acil Nöbetçi Girişleri (Aradan Silme Destekli)
-    # ---------------------------------------------------------
+    # Acil Nöbet Girişleri
     st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
-    
-    if "acil_listesi" not in st.session_state:
-        st.session_state.acil_listesi = [{"personel": "Seçiniz...", "sabitler": []}]
-
-    def acil_satir_ekle():
-        st.session_state.acil_listesi.append({"personel": "Seçiniz...", "sabitler": []})
+    if "acil_satir_sayisi" not in st.session_state: st.session_state.acil_satir_sayisi = 1
+    def acil_satir_ekle(): st.session_state.acil_satir_sayisi += 1
+    def acil_satir_cikar():
+        if st.session_state.acil_satir_sayisi > 1: st.session_state.acil_satir_sayisi -= 1
 
     sabit_acil_nobetler = {p: [] for p in nobetci_personeller}
     toplam_sabit_acil_sayisi = 0
 
-    for a_idx, a_data in enumerate(st.session_state.acil_listesi):
-        c1, c2, c3 = st.columns([1.5, 3.5, 0.4])
-        
-        with c1:
-            p_opts = ["Seçiniz..."] + nobetci_personeller
-            p_idx = p_opts.index(a_data["personel"]) if a_data["personel"] in p_opts else 0
-            p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=p_opts, index=p_idx, key=f"a_personel_{a_idx}")
-            st.session_state.acil_listesi[a_idx]["personel"] = p_acil_secilen
-
-        with c2:
-            selected_acil_days = st.multiselect(
-                f"Sabit Acil Nöbet Günleri #{a_idx+1}:",
-                options=gun_secenekleri,
-                default=[d for d in a_data["sabitler"] if d in gun_secenekleri],
-                key=f"a_forced_{a_idx}"
-            )
-            st.session_state.acil_listesi[a_idx]["sabitler"] = selected_acil_days
-
-        with c3:
-            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("❌", key=f"btn_a_sil_{a_idx}", help="Bu satırı sil"):
-                st.session_state.acil_listesi.pop(a_idx)
-                st.rerun()
+    for a_idx in range(st.session_state.acil_satir_sayisi):
+        c1, c2 = st.columns([1.5, 3.3])
+        with c1: p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
+        with c2: selected_acil_days = st.multiselect(f"Sabit Acil Nöbet Günleri #{a_idx+1}:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}")
 
         if p_acil_secilen != "Seçiniz...":
             sabit_acil_nobetler[p_acil_secilen].extend(selected_acil_days)
             toplam_sabit_acil_sayisi += len(selected_acil_days)
 
-    col_a_btn1, _ = st.columns([1.8, 4.2])
-    with col_a_btn1:
-        st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
+    col_a_btn1, col_a_btn2, _ = st.columns([1.2, 1.2, 3.6])
+    with col_a_btn1: st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
+    with col_a_btn2: st.button("➖ Acil Satırı Sil", on_click=acil_satir_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
-    # 3. Kişiler Arası Kısıtlar (Hata Düzeltildi & Silme Eklendi)
-    # ---------------------------------------------------------
+    # Kişiler Arası Kısıtlar
     st.markdown('<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı Kuralları</div>', unsafe_allow_html=True)
-    
-    if "kisi_kisit_listesi" not in st.session_state:
-        st.session_state.kisi_kisit_listesi = [{"ana": "Seçiniz...", "aralik": 1, "yasaklilar": []}]
-
-    def kisi_kisit_satir_ekle():
-        st.session_state.kisi_kisit_listesi.append({"ana": "Seçiniz...", "aralik": 1, "yasaklilar": []})
+    if "kisi_kisit_sayisi" not in st.session_state: st.session_state.kisi_kisit_sayisi = 1
+    def kisit_ekle(): st.session_state.kisi_kisit_sayisi += 1
+    def kisit_cikar():
+        if st.session_state.kisi_kisit_sayisi > 1: st.session_state.kisi_kisit_sayisi -= 1
 
     kisi_kisitlari = []
-    
-    for k_idx, kisit_data in enumerate(st.session_state.kisi_kisit_listesi):
-        c1, c2, c3, c4 = st.columns([1.5, 1, 2.5, 0.4])
-        
-        with c1:
-            p_opts = ["Seçiniz..."] + nobetci_personeller
-            # HATA DÜZELTİLDİ: index doğrudan seçenekler listesi (p_opts) üzerinden alınıyor
-            p_idx = p_opts.index(kisit_data["ana"]) if kisit_data["ana"] in p_opts else 0
-            
-            p_ana = st.selectbox(
-                f"Ana Personel #{k_idx+1}:",
-                options=p_opts,
-                index=p_idx,
-                key=f"p_ana_{k_idx}"
-            )
-            st.session_state.kisi_kisit_listesi[k_idx]["ana"] = p_ana
-
-        with c2:
-            min_aralik = st.number_input(
-                f"Min. Mesafe #{k_idx+1}:",
-                min_value=0,
-                max_value=15,
-                value=int(kisit_data["aralik"]),
-                key=f"min_aralik_{k_idx}"
-            )
-            st.session_state.kisi_kisit_listesi[k_idx]["aralik"] = min_aralik
-
-        with c3:
-            p_yasakli_options = [p for p in nobetci_personeller if p != p_ana]
-            valid_yasaklilar = [p for p in kisit_data["yasaklilar"] if p in p_yasakli_options]
-            
-            p_yasakli_list = st.multiselect(
-                f"Yasaklı Kişiler #{k_idx+1}:",
-                options=p_yasakli_options,
-                default=valid_yasaklilar,
-                key=f"p_yasakli_{k_idx}"
-            )
-            st.session_state.kisi_kisit_listesi[k_idx]["yasaklilar"] = p_yasakli_list
-
-        with c4:
-            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("❌", key=f"btn_kisi_sil_{k_idx}", help="Bu kısıtı sil"):
-                st.session_state.kisi_kisit_listesi.pop(k_idx)
-                st.rerun()
-
+    for k_idx in range(st.session_state.kisi_kisit_sayisi):
+        c1, c2, c3 = st.columns([1.2, 1, 2])
+        with c1: p_ana = st.selectbox(f"Ana Personel #{k_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
+        with c2: min_aralik = st.number_input(f"Min. Mesafe (Gün) #{k_idx+1}:", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
+        with c3: p_yasakli_list = st.multiselect(f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
         if p_ana != "Seçiniz..." and p_yasakli_list:
             kisi_kisitlari.append({"ana": p_ana, "aralik": min_aralik, "yasaklilar": p_yasakli_list})
 
-    col_btn1, _ = st.columns([1.5, 4.5])
-    with col_btn1:
-        st.button("➕ Yeni Kısıt Ekle", on_click=kisi_kisit_satir_ekle)
+    col_btn1, col_btn2, _ = st.columns([1, 1, 4])
+    with col_btn1: st.button("➕ Yeni Kısıt Ekle", on_click=kisit_ekle)
+    with col_btn2: st.button("➖ Kısıt Sil", on_click=kisit_cikar)
 
     st.markdown("<br>", unsafe_allow_html=True)
     m1, m2, m3, m4, m5, m6 = st.columns(6)
