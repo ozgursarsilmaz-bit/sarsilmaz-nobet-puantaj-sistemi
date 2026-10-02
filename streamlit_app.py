@@ -1421,10 +1421,10 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     
     default_egiticiler = [
         "Prof.Dr. Yeşim ÇEKİN",
-        "Prof.Dr. H.Nevgün ÖZEN",
-        "Doç.Dr. C.Aylin ERMAN DALOĞLU",
+        "Prof.Dr. Hatice Nevgün ÖZEN",
+        "Doç.Dr. Cemile Aylin ERMAN DALOĞLU",
         "Doç.Dr. Halil ER",
-        "Baş.As.Doç.Dr. Özlem KOCA"
+        "Başasistan Doç.Dr. Özlem KOCA"
     ]
     
     egitici_input = st.text_area(
