@@ -1399,7 +1399,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         """
     <div class="header-box">
         <h1>🎓 Eğitici Destekleme Puan Çizelgesi Modülü</h1>
-        <p>Haftalara Dengeli Teorik Eğitim (8s) & İzin Durumunda Esnek Gün Dağıtımı & Adil Pratik Eğitim (40s)</p>
+        <p>Haftalara Dengeli Teorik Eğitim (8s) & İzin Durumunda Esnek Gün Dağıtımı & Resmi Şablon Excel Çıktısı</p>
         <div class="header-imza">✍️ Özgür SARSILMAZ</div>
     </div>
     """,
@@ -1422,9 +1422,9 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     default_egiticiler = [
         "Prof.Dr. Yeşim ÇEKİN",
         "Prof.Dr. H.Nevgün ÖZEN",
-        "Doç.Dr. C.Aylin ERMAN DALOĞLU",
-        "Doç.Dr. Halil ER",
-        "Baş.As.Doç.Dr. Özlem KOCA"
+        "C.Aylin ERMAN DALOĞLU",
+        "Uzay HALİL",
+        "Özlem KOCA"
     ]
     
     egitici_input = st.text_area(
@@ -1437,7 +1437,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.markdown("---")
     st.markdown('<div class="section-title">🏖️ Hekim Bazlı İzinli Gün Seçimi</div>', unsafe_allow_html=True)
-    st.info("💡 Hekimlerin izinli/görevli olduğu günleri seçiniz. Normal şartlarda günde en fazla 1 hekime teorik ders yazılır; ancak izinler çakıştığında sistem kuralı esneterek aynı güne birden fazla hekimin dersini yazabilir.")
+    st.info("💡 Hekimlerin izinli/görevli olduğu günleri seçiniz. Teorik dersler haftalara eşit dağıtılacak ve çıktı orijinal Excel şablonunuzla birebir aynı formatta üretilecektir.")
 
     egitici_izinler = {}
     for idx, egitici in enumerate(egitici_listesi):
@@ -1452,6 +1452,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # MEVCUT EXCEL ŞABLONUNA %100 UYUMLU FORMAT OLUŞTURUCU
     def generate_egitici_excel(egit_yil, egit_ay, egit_gun_sayisi, egitici_results):
         wb = openpyxl.Workbook()
         default_sheet = wb.active
@@ -1462,20 +1463,22 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         }
         ilgili_ay_str = f"{ay_adlari_tr[egit_ay]} {egit_yil}"
 
-        font_header_bold = Font(name="Calibri", size=11, bold=True)
-        font_title_bold = Font(name="Calibri", size=12, bold=True)
-        font_bold = Font(name="Calibri", size=10, bold=True)
-        font_regular = Font(name="Calibri", size=10)
-        font_footer = Font(name="Calibri", size=9, italic=True)
+        # Font Tanımlamaları
+        font_header = Font(name="Calibri", size=11, bold=False)
+        font_title = Font(name="Calibri", size=11, bold=True)
+        font_red = Font(name="Calibri", size=11, bold=True, color="FF0000")
+        font_table_hdr = Font(name="Calibri", size=11, bold=True)
+        font_date = Font(name="Times New Roman", size=11)
+        font_val = Font(name="Calibri", size=11)
+        font_footer = Font(name="Calibri", size=8, italic=False)
 
-        align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        
-        thin_border = Border(
-            left=Side(style='thin', color='000000'),
-            right=Side(style='thin', color='000000'),
-            top=Side(style='thin', color='000000'),
-            bottom=Side(style='thin', color='000000')
-        )
+        # Stiller
+        fill_weekend = PatternFill(start_color="D4D4D4", end_color="D4D4D4", fill_type="solid")
+        align_center = Alignment(horizontal="center", vertical="center")
+        align_justify = Alignment(horizontal="justify", vertical="center", wrap_text=True)
+
+        thin_side = Side(style='thin', color='000000')
+        thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
         for egitici_ad, df_hekim in egitici_results.items():
             parts = egitici_ad.split()
@@ -1485,13 +1488,27 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             ws = wb.create_sheet(title=sheet_title)
             ws.views.sheetView[0].showGridLines = True
 
-            ws.cell(row=1, column=1, value="T.C.").font = font_header_bold
-            ws.cell(row=2, column=1, value="ANTALYA VALİLİĞİ").font = font_header_bold
-            ws.cell(row=3, column=1, value="İl Sağlık Müdürlüğü").font = font_header_bold
-            ws.cell(row=4, column=1, value="Sağlık Bilimleri Üniversitesi Antalya Eğitim ve Araştırma Hastanesi").font = font_header_bold
+            # 1. Üst Başlıklar (A1:C4 Birleştirilmiş & Ortalanmış)
+            ws.merge_cells("A1:C1")
+            ws.merge_cells("A2:C2")
+            ws.merge_cells("A3:C3")
+            ws.merge_cells("A4:C4")
+            
+            ws.cell(row=1, column=1, value="T.C.").font = font_header
+            ws.cell(row=2, column=1, value="ANTALYA VALİLİĞİ").font = font_header
+            ws.cell(row=3, column=1, value="İl Sağlık Müdürlüğü").font = font_header
+            ws.cell(row=4, column=1, value="Sağlık Bilimleri Üniversitesi Antalya Eğitim ve Araştırma Hastanesi").font = font_header
 
-            ws.cell(row=6, column=1, value="EĞİTİCİ DESTEKLEME PUAN ÇİZELGESİ").font = font_title_bold
+            for r in range(1, 5):
+                ws.cell(row=r, column=1).alignment = align_center
 
+            # 2. Çizelge Başlığı (A6:C6 Birleştirilmiş)
+            ws.merge_cells("A6:C6")
+            c_title = ws.cell(row=6, column=1, value="EĞİTİCİ DESTEKLEME PUAN ÇİZELGESİ")
+            c_title.font = font_title
+            c_title.alignment = align_center
+
+            # 3. Ad / Soyad / Klinik / İlgili Ay
             unvan_ad = egitici_ad
             soyad = ""
             if " " in egitici_ad:
@@ -1499,63 +1516,82 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 soyad = p_tokens[-1]
                 unvan_ad = " ".join(p_tokens[:-1])
 
-            ws.cell(row=7, column=1, value="ADI :").font = font_bold
-            ws.cell(row=7, column=2, value=unvan_ad).font = font_regular
+            ws.cell(row=7, column=1, value="ADI :").font = font_header
+            ws.cell(row=7, column=2, value=unvan_ad).font = font_header
 
-            ws.cell(row=8, column=1, value="SOYADI :").font = font_bold
-            ws.cell(row=8, column=2, value=soyad).font = font_regular
+            ws.cell(row=8, column=1, value="SOYADI :").font = font_header
+            ws.cell(row=8, column=2, value=soyad).font = font_header
 
-            ws.cell(row=9, column=1, value="KLİNİĞİ :").font = font_bold
-            ws.cell(row=9, column=2, value="Tıbbi Mikrobiyoloji").font = font_regular
+            ws.cell(row=9, column=1, value="KLİNİĞİ :").font = font_header
+            ws.cell(row=9, column=2, value="Tıbbi Mikrobiyoloji").font = font_header
 
-            ws.cell(row=10, column=1, value="İLGİLİ AY :").font = font_bold
-            ws.cell(row=10, column=2, value=ilgili_ay_str).font = font_regular
+            ws.cell(row=10, column=1, value="İLGİLİ AY :").font = font_header
+            c_ay = ws.cell(row=10, column=2, value=ilgili_ay_str)
+            c_ay.font = font_red # Kırmızı font[cite: 4]
 
-            ws.cell(row=13, column=1, value="* LABORATUVAR KLİNİKLERİ").font = font_bold
+            # 4. Alt Başlık
+            ws.cell(row=13, column=1, value="* LABORATUVAR KLİNİKLERİ").font = Font(name="Calibri", size=11, bold=True, underline="single")
 
+            # 5. Tablo Başlıkları
             h1 = ws.cell(row=14, column=1, value="GÜN")
             h2 = ws.cell(row=14, column=2, value="PRATİK EĞİTİM ÇALIŞMASI")
             h3 = ws.cell(row=14, column=3, value="TEORİK EĞİTİM")
 
             for h_cell in [h1, h2, h3]:
-                h_cell.font = font_bold
+                h_cell.font = font_table_hdr
                 h_cell.alignment = align_center
                 h_cell.border = thin_border
 
+            # 6. Tablo Satırları (Günler)
             current_row = 15
             for _, r_data in df_hekim.iterrows():
                 dt_val = r_data["Tarih_Obj"]
                 pratik_v = r_data["Pratik"]
                 teorik_v = r_data["Teorik"]
+                is_weekend = dt_val.weekday() >= 5 # Cumartesi / Pazar
 
+                # Gün Hücresi
                 c_day = ws.cell(row=current_row, column=1, value=dt_val)
-                c_day.number_format = 'yyyy-mm-dd'
-                c_day.font = font_regular
+                c_day.number_format = 'd.mm.yyyy' # 1.09.2026 Formatı[cite: 4]
+                c_day.font = font_date
                 c_day.alignment = align_center
                 c_day.border = thin_border
 
+                # Pratik Hücresi
                 c_pratik = ws.cell(row=current_row, column=2, value=pratik_v if pratik_v > 0 else None)
-                c_pratik.font = font_regular
+                c_pratik.font = font_val
                 c_pratik.alignment = align_center
                 c_pratik.border = thin_border
 
+                # Teorik Hücresi
                 c_teorik = ws.cell(row=current_row, column=3, value=teorik_v if teorik_v > 0 else None)
-                c_teorik.font = font_regular
+                c_teorik.font = font_val
                 c_teorik.alignment = align_center
                 c_teorik.border = thin_border
 
+                # Hafta sonu ise Gri Dolgu uygula[cite: 4]
+                if is_weekend:
+                    c_day.fill = fill_weekend
+                    c_pratik.fill = fill_weekend
+                    c_teorik.fill = fill_weekend
+
                 current_row += 1
 
-            footer_row = current_row + 1
-            ws.cell(
+            # 7. Dipnot Metni (A46:C46 Birleştirilmiş)
+            footer_row = 46
+            ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=3)
+            c_ft = ws.cell(
                 row=footer_row,
                 column=1,
                 value="*Laboratuvar klinikleri  için 40 saat pratik eğitim çalışması ve 8 saat teorik asistan eğitim çalışması yapıldığının belgelendirmesi halinde eğitici destekleme puanı verilir,"
-            ).font = font_footer
+            )
+            c_ft.font = font_footer
+            c_ft.alignment = align_justify
 
-            ws.column_dimensions["A"].width = 22
-            ws.column_dimensions["B"].width = 28
-            ws.column_dimensions["C"].width = 18
+            # Sütun Genişlikleri
+            ws.column_dimensions["A"].width = 18
+            ws.column_dimensions["B"].width = 30
+            ws.column_dimensions["C"].width = 25
 
         wb.remove(default_sheet)
         output_e = BytesIO()
@@ -1568,7 +1604,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         egitici_results = {}
         hesaplama_hatalari = []
 
-        # Veri yapılarını başlat
         for egitici in egitici_listesi:
             df_h = pd.DataFrame({"Tarih_Obj": egit_tum_tarihler})
             df_h["Tarih"] = df_h["Tarih_Obj"].apply(lambda d: d.strftime("%d.%m.%Y"))
@@ -1577,7 +1612,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             df_h["Teorik"] = 0
             egitici_results[egitici] = df_h
 
-        # Mesai günlerini haftalara grupla
         haftalar = {}
         for d in egit_mesai_gunleri:
             w_num = d.isocalendar()[1]
@@ -1585,7 +1619,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 haftalar[w_num] = []
             haftalar[w_num].append(d)
 
-        # Günlük atanan teorik ders sayısını takip et
         gunluk_teorik_sayisi = {d: 0 for d in egit_mesai_gunleri}
         hekim_haftalik_teorik = {e: {w: 0 for w in haftalar} for e in egitici_listesi}
         hekim_toplam_teorik = {e: 0 for e in egitici_listesi}
@@ -1598,14 +1631,12 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 if hekim_haftalik_teorik[egitici][w_num] >= 2:
                     continue
 
-                # 1. Öncelik: Çakışmasız (O gün henüz ders yazılmamış) ve hekimin izinli olmadığı boş gün
                 atanan_gun = None
                 for d in w_gunleri:
                     if gunluk_teorik_sayisi[d] == 0 and d not in egitici_izinler.get(egitici, set()):
                         atanan_gun = d
                         break
 
-                # 2. Öncelik (Kural Esnetme): Eğer çakışmasız gün yoksa, izinli olmadığı en az ders yazılmış güne esnet
                 if atanan_gun is None:
                     musait_gunler = [d for d in w_gunleri if d not in egitici_izinler.get(egitici, set())]
                     if musait_gunler:
@@ -1618,7 +1649,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                     hekim_haftalik_teorik[egitici][w_num] += 2
                     hekim_toplam_teorik[egitici] += 2
 
-        # Eksik kalan teorik saati olan hekim var ise ayın kalan boş günlerine (esneterek) tamamla
         for egitici, t_saat in hekim_toplam_teorik.items():
             if t_saat < 8:
                 kalan = 8 - t_saat
@@ -1663,7 +1693,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 "ay": egit_ay
             }
             st.balloons()
-            st.success("✨ Tüm eğiticiler için haftalara dengeli ve esnek 40s Pratik / 8s Teorik eğitim çizelgeleri oluşturuldu!")
+            st.success("✨ Tüm eğiticiler için resmi Excel şablonu ile tam uyumlu 40s Pratik / 8s Teorik eğitim çizelgeleri oluşturuldu!")
 
     # SONUÇLARIN İNCELENMESİ VE İNDİRİLMESİ
     if "egitici_sonuc" in st.session_state and st.session_state.egitici_sonuc is not None:
