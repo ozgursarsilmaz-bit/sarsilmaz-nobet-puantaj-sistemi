@@ -211,7 +211,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     ]
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🛡️ Genel Kural Kurulumu")
+    st.sidebar.subheader("🛡️️ Genel Kural Kurulumu")
     gunluk_nobetci = st.sidebar.number_input(
         "Birim Başı Günlük Nöbetçi İhtiyacı:",
         min_value=1,
@@ -248,7 +248,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     gecmis_istatistik = {}
     gecmis_acil_istatistik = {}
     gecmis_kultur8_istatistik = {}
-    otomatik_son_gun_nobetcileri = []
+    otomatik_son_gun_normal = []
+    otomatik_son_gun_acil = []
 
     if uploaded_file is not None:
         try:
@@ -298,20 +299,33 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         if col_name in df_goreg.columns and pd.notna(last_row[col_name]):
                             names = str(last_row[col_name]).split(",")
                             for n in names:
+                                is_acil = "(Acil)" in n
                                 clean_n = n.replace("(Acil)", "").strip().upper()
                                 if clean_n in nobetci_personeller:
-                                    otomatik_son_gun_nobetcileri.append(clean_n)
+                                    if is_acil:
+                                        otomatik_son_gun_acil.append(clean_n)
+                                    else:
+                                        otomatik_son_gun_normal.append(clean_n)
 
             st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
         except Exception as e:
             st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
-    gecmis_ay_son_gun_nobetcileri = st.sidebar.multiselect(
-        "🌙 Geçmiş Ay Son Günü Nöbet Tutan Personel(ler):",
+    gecmis_ay_son_gun_normal = st.sidebar.multiselect(
+        "🌙 Geçmiş Ay Son Günü NORMAL Nöbetçileri:",
         options=nobetci_personeller,
-        default=list(set(otomatik_son_gun_nobetcileri)),
-        help="Önceki ayın son günü nöbet tutup ödemesini peşin alan personeller. Bu ayın 1. gününe Nİ yazılır ve 8 saat mahsuplaşılır.",
+        default=list(set(otomatik_son_gun_normal)),
+        help="Önceki ayın son günü normal nöbet tutan personeller.",
     )
+
+    gecmis_ay_son_gun_acil = st.sidebar.multiselect(
+        "🚨 Geçmiş Ay Son Günü ACİL Nöbetçileri:",
+        options=[p for p in nobetci_personeller if p not in gecmis_ay_son_gun_normal],
+        default=list(set(otomatik_son_gun_acil)),
+        help="Önceki ayın son günü acil nöbet tutan personeller.",
+    )
+
+    gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
 
     def get_prev(p_name, category):
         p_norm = tr_norm(p_name)
@@ -432,21 +446,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else: toplam_saat += 8
         return toplam_saat
 
-    def calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-        dt = datetime.date(yil, ay, d)
-        if d in yarim_gun_tatil_gunleri: return 19
-        if d == gun_sayisi: return 24 if dt.weekday() in [5, 6] else 16
-        if is_day_off(yil, ay, d, resmi_tatil_gunleri):
-            if d < gun_sayisi:
-                sonraki_gun_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri)
-                if (d + 1) in yarim_gun_tatil_gunleri: return 19
-                return 24 if sonraki_gun_off else 16
-            else: return 16
-        if (d + 1) in yarim_gun_tatil_gunleri: return 11
-        if (d + 1) <= gun_sayisi and is_day_off(yil, ay, d + 1, resmi_tatil_gunleri): return 16
-        return 8
-
-    def calculate_personel_puantaj_metrikleri(p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri):
+    def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
         aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
         toplam_calisma = 0
@@ -455,41 +455,113 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         risk_gece = 0
         risk_normal = 0
 
+        # 1. Ham Nöbet Saatlerinin Dağıtılması
         for d in range(1, gun_sayisi + 1):
             val = str(p_row_dict.get(str(d), "")).strip()
 
+            # Sütun 1: Sadece çalışan ham saatlerin toplamı (Nİ düşümü YAPILMAZ)
             if val in ["8", "5", "16", "19", "11", "24"]:
                 toplam_calisma += int(val)
 
-            if val == "Nİ":
-                toplam_calisma -= 8
+            dt = datetime.date(yil, ay, d)
+            weekday = dt.weekday()
+            is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
+            is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else False
+            is_risk = d in acil_days_set
 
             if val == "24":
-                is_risk = d in acil_days_set
-                n_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-
-                if n_saat in [16, 24]:
-                    g_saat = 12
-                elif n_saat in [8, 11]:
-                    g_saat = 8
-                elif n_saat == 19:
-                    g_saat = 12
+                # Nöbet türüne göre Gece / Normal kırılımı
+                if d == 5 and d in yarim_gun_tatil_gunleri: # Örn: 5 Ekim Arife Öncesi
+                    g_saat, n_saat = 8, 3
+                elif d in yarim_gun_tatil_gunleri: # Örn: 6 Ekim Arife
+                    g_saat, n_saat = 12, 7
+                elif d == gun_sayisi and not is_next_day_off: # Ayın son günü ertesi hafta içi
+                    g_saat, n_saat = 12, 4
+                elif is_off:
+                    if is_next_day_off: # Resmi tatil ertesi de tatil (7 Ekim)
+                        g_saat, n_saat = 12, 12
+                    else: # Resmi tatil ertesi mesai (8 Ekim)
+                        g_saat, n_saat = 12, 4
+                elif weekday in [0, 1, 2, 3]: # Pzt, Salı, Çarş, Per
+                    g_saat, n_saat = 8, 0
+                elif weekday in [4, 6]: # Cuma ve Pazar
+                    g_saat, n_saat = 12, 4
+                elif weekday == 5: # Cumartesi
+                    g_saat, n_saat = 12, 12
                 else:
-                    g_saat = min(12, n_saat)
-
-                gunduz_saat = max(0, n_saat - g_saat)
+                    g_saat, n_saat = 12, 4
 
                 if is_risk:
                     risk_gece += g_saat
-                    risk_normal += gunduz_saat
+                    risk_normal += n_saat
                 else:
                     norm_gece += g_saat
-                    norm_normal += gunduz_saat
+                    norm_normal += n_saat
 
             elif val == "8" and d in kultur_8s_tatil_gunleri:
+                # Resmi tatillerde tutulan manuel Kültür 8s vardiyası
                 norm_normal += 8
 
-        fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
+        # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
+        is_devir_normal = p_name in gecmis_ay_son_gun_normal
+        is_devir_acil = p_name in gecmis_ay_son_gun_acil
+
+        if is_devir_normal or is_devir_acil:
+            dusulecek_saat = 8
+
+            if is_devir_acil:
+                # Öncelik: Riskli Nöbet Saatleri (Sütun 6 & 7)
+                dusulen_norm_gece = min(4, risk_gece)
+                risk_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
+
+                dusulen_norm_normal = min(4, risk_normal)
+                risk_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
+
+                if dusulecek_saat > 0 and risk_gece > 0:
+                    ek_dusu = min(dusulecek_saat, risk_gece)
+                    risk_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
+
+                # Çapraz Mahsuplaşma: Riskli saat yetersizse Normal saatlerden düşülür
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, norm_gece)
+                    norm_gece -= d_gece
+                    dusulecek_saat -= d_gece
+
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, norm_normal)
+                    norm_normal -= d_norm
+                    dusulecek_saat -= d_norm
+
+            else:
+                # Öncelik: Normal Nöbet Saatleri (Sütun 4 & 5)
+                dusulen_norm_gece = min(4, norm_gece)
+                norm_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
+
+                dusulen_norm_normal = min(4, norm_normal)
+                norm_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
+
+                if dusulecek_saat > 0 and norm_gece > 0:
+                    ek_dusu = min(dusulecek_saat, norm_gece)
+                    norm_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
+
+                # Çapraz Mahsuplaşma: Normal saat yetersizse Riskli saatlerden düşülür
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, risk_gece)
+                    risk_gece -= d_gece
+                    dusulecek_saat -= d_gece
+
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, risk_normal)
+                    risk_normal -= d_norm
+                    dusulecek_saat -= d_norm
+
+        fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
         return {
             "Toplam Çalışma Saati": toplam_calisma,
@@ -501,7 +573,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             "Riskli_Normal": risk_normal,
         }
 
-    def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_nobetcileri):
+    def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
         wb = openpyxl.Workbook()
         font_title = Font(name="Calibri", size=12, bold=True)
         font_header = Font(name="Calibri", size=10, bold=True)
@@ -626,11 +698,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             bu_ay_gunler = {g: 0 for g in gunler_listesi}
             bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
-            bu_ay_saat = 0
+            bu_ay_saat = bu_ay_toplam_nobet * 24
             for d in nobet_dict.get(p, set()):
                 w = datetime.date(yil, ay, d).weekday()
                 bu_ay_gunler[tr_gunler[w]] += 1
-                bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
             c_i = 3
             for g in gunler_listesi:
@@ -648,7 +719,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             cell_nobet.font, cell_nobet.alignment, cell_nobet.border = font_bold, align_center, border_cell
             c_i += 1
 
-            bu_ay_acil_saat = sum(calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri) for d in acil_nobet_dict.get(p, set()))
+            bu_ay_acil_saat = len(acil_nobet_dict.get(p, set())) * 24
             acil_devir = int(get_prev_acil(p))
             for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_devir + bu_ay_acil_saat]):
                 cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
@@ -696,6 +767,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             c_i = start_col + idx
             cell = ws3.cell(row=5, column=c_i, value=b_adi)
             cell.font, cell.fill, cell.alignment, cell.border = font_header, fill_green_bg, align_vertical_header, border_cell
+
+        gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
 
         for idx, p in enumerate(tum_girilen_personeller):
             r = 6 + idx
@@ -746,7 +819,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
                 p_row_dict[str(day)] = str(cell.value)
 
-            m = calculate_personel_puantaj_metrikleri(p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri)
+            m = calculate_personel_puantaj_metrikleri(p, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil)
             metrik_values = [
                 int(m["Toplam Çalışma Saati"]), int(m["Aylık Çalışma Saati"]), int(m["Fazla Nöbet Saati"]),
                 int(m["Normal_Gece"]), int(m["Normal_Normal"]), int(m["Riskli_Gece"]), int(m["Riskli_Normal"]),
@@ -769,8 +842,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
         for day in range(1, gun_sayisi + 1):
             col_idx = day + 2
-            shift_h = calculate_shift_hours(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-            cell = ws3.cell(row=summary_r, column=col_idx, value=shift_h)
+            cell = ws3.cell(row=summary_r, column=col_idx, value="")
             cell.font, cell.alignment, cell.border, cell.fill = font_bold, align_center, border_cell, fill_green_bg
 
         for m_idx in range(len(ek_basliklar)):
@@ -904,7 +976,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     model.Add(sum(x[(p, d)] for d in cumartesi_indeksleri) <= 1)
                     model.Add(sum(x[(p, d)] for d in pazar_indeksleri) <= 1)
 
-            gun_saatleri = [calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri) for d in range(1, gun_sayisi + 1)]
             kategoriler = {
                 "Pazartesi": ([0], 500), "Salı": ([1], 500), "Çarşamba": ([2], 500),
                 "Perşembe": ([3], 1000), "Cuma": ([4], 1500), "Cumartesi": ([5], 2500), "Pazar": ([6], 2000),
@@ -922,7 +993,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 for p in b_personelleri:
                     bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
                     k8_saat_toplam = sum(k8[(p, d)] * 8 for d in kultur_8s_gun_indeksleri) if p in kultur_nobetcileri else 0
-                    model.Add(bu_ay_saat == sum(x[(p, d)] * gun_saatleri[d] for d in range(gun_sayisi)) + k8_saat_toplam)
+                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)) + k8_saat_toplam)
                     model.Add(bu_ay_saat <= max_b_saat)
                     model.Add(bu_ay_saat >= min_b_saat)
 
@@ -990,9 +1061,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     for d in g_list:
                         if d in nobet_dict[p]:
                             acil_nobet_dict[p].add(d)
-                            g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-                            bu_ay_acil_saat[p] += g_saat
-                            kumulatif_acil_saat[p] += g_saat
+                            bu_ay_acil_saat[p] += 24
+                            kumulatif_acil_saat[p] += 24
 
                 for d in range(1, gun_sayisi + 1):
                     mevcut_acil = [p for p in nobetci_personeller if d in acil_nobet_dict[p]]
@@ -1001,9 +1071,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         if gun_nobetcileri:
                             secilen_acil = min(gun_nobetcileri, key=lambda p: (bu_ay_acil_saat[p], kumulatif_acil_saat[p]))
                             acil_nobet_dict[secilen_acil].add(d)
-                            g_saat = calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-                            bu_ay_acil_saat[secilen_acil] += g_saat
-                            kumulatif_acil_saat[secilen_acil] += g_saat
+                            bu_ay_acil_saat[secilen_acil] += 24
+                            kumulatif_acil_saat[secilen_acil] += 24
 
                 liste_data = []
                 for d in range(1, gun_sayisi + 1):
@@ -1043,11 +1112,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
                     bu_ay_gunler = {g: 0 for g in gunler_listesi}
                     bu_ay_toplam_nobet = len(nobet_dict[p])
-                    bu_ay_saat = 0
+                    bu_ay_saat = bu_ay_toplam_nobet * 24
                     for d in nobet_dict[p]:
                         w = datetime.date(yil, ay, d).weekday()
                         bu_ay_gunler[tr_gunler[w]] += 1
-                        bu_ay_saat += calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
                     row_dict = {("AD SOYAD", ""): p, ("Birim", ""): p_birim}
                     for g in gunler_listesi:
@@ -1060,7 +1128,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     row_dict[("T.NöbetSaati", "")] = bu_ay_saat
                     row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
 
-                    bu_ay_acil_saat_val = sum(calculate_shift_hours(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri) for d in acil_nobet_dict[p])
+                    bu_ay_acil_saat_val = len(acil_nobet_dict[p]) * 24
                     acil_devir = get_prev_acil(p)
                     row_dict[("ACİL NÖBET (SAAT)", "Devir")] = acil_devir
                     row_dict[("ACİL NÖBET (SAAT)", "Bu Ay")] = bu_ay_acil_saat_val
@@ -1104,7 +1172,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                                 elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
                                 else: p_row[str(d)] = "8"
 
-                    m = calculate_personel_puantaj_metrikleri(p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_nobet_dict.get(p, set()), kultur_8s_tatil_gunleri)
+                    m = calculate_personel_puantaj_metrikleri(p, p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_nobet_dict.get(p, set()), kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil)
                     p_row["Toplam çalışma saati"] = m["Toplam Çalışma Saati"]
                     p_row["Aylık Çalışma Saati"] = m["Aylık Çalışma Saati"]
                     p_row["Fazla nöbet saati"] = m["Fazla Nöbet Saati"]
@@ -1120,7 +1188,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     nobet_dict, kultur_8s_dict, acil_nobet_dict,
                     gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik,
                     gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri,
-                    kultur_8s_tatil_gunleri, gecmis_ay_son_gun_nobetcileri,
+                    kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil,
                 )
 
                 st.session_state.hesaplanan_sonuc = {
@@ -1209,9 +1277,9 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
                 uzman_schedule = {day: {} for day in range(1, 32)}
 
                 for day in range(1, 32):
-                    r = day + 7 # Row 8 = Oct 1
-                    for c in range(3, 23): # Col C to V (L-1 to L-20)
-                        code = sh_klinik.cell(row=6, column=c).value # e.g. L-1
+                    r = day + 7
+                    for c in range(3, 23):
+                        code = sh_klinik.cell(row=6, column=c).value
                         doc = sh_klinik.cell(row=r, column=c).value
                         if doc and str(doc).strip():
                             doc_str = str(doc).strip()
@@ -1219,7 +1287,6 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
                                 uzman_schedule[day][doc_str] = []
                             uzman_schedule[day][doc_str].append(code)
 
-                # Nöbet (L-14) ve Nöbet İzni (L-15) Önceliği ile Kod Atama
                 uzman_result_grid = {}
                 for full_name, short_name in uzman_doc_mapping.items():
                     uzman_result_grid[full_name] = {}
@@ -1231,12 +1298,11 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
                         else: final_code = codes[0]
                         uzman_result_grid[full_name][day] = final_code
 
-                # Excel Sekmesini Güncelleme
                 for r in range(9, 27):
                     full_name = str(sh_hekim.cell(row=r, column=2).value).strip()
                     if full_name in uzman_result_grid:
                         for day in range(1, 32):
-                            col_idx = day + 4 # Day 1 = Col E (5)
+                            col_idx = day + 4
                             val = uzman_result_grid[full_name][day]
                             sh_hekim.cell(row=r, column=col_idx).value = val if val else None
 
@@ -1244,7 +1310,6 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
                 wb.save(output_uzman)
                 output_uzman.seek(0)
 
-                # Tablo Görünümü Hazırlama
                 uzman_grid_rows = []
                 for doc_n in uzman_doc_mapping:
                     row_data = {"Hekim Adı Soyadı": doc_n}
@@ -1319,8 +1384,8 @@ elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
                 as_schedule = {day: {} for day in range(1, 32)}
                 
                 for day in range(1, 32):
-                    r = day + 7 # Row 8 = Day 1
-                    for c in range(3, 14): # Col C to M (L-1 to L-11)
+                    r = day + 7
+                    for c in range(3, 14):
                         code = sh_klinik_as.cell(row=6, column=c).value
                         doc = sh_klinik_as.cell(row=r, column=c).value
                         if doc and str(doc).strip():
@@ -1335,7 +1400,6 @@ elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
                                     as_schedule[day][matched_doc] = []
                                 as_schedule[day][matched_doc].append(code)
 
-                # Nöbet (L-6) ve Nöbet İzni (L-7) Önceliği ile Kod Atama
                 as_result_grid = {}
                 for full_name in as_doc_mapping:
                     as_result_grid[full_name] = {}
@@ -1347,16 +1411,14 @@ elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
                         else: final_code = codes[0]
                         as_result_grid[full_name][day] = final_code
 
-                # Excel Sekmesini Güncelleme
                 for r in range(9, 17):
                     full_name = str(sh_hekim_as.cell(row=r, column=2).value).strip()
                     if full_name in as_result_grid:
                         for day in range(1, 32):
-                            col_idx = day + 4 # Day 1 = Col E (5)
+                            col_idx = day + 4
                             val = as_result_grid[full_name][day]
                             sh_hekim_as.cell(row=r, column=col_idx).value = val if val else None
 
-                # Başlık Taraması/Düzeltmesi
                 title_val = sh_hekim_as.cell(row=1, column=5).value
                 if title_val and 'EYLÜL' in str(title_val):
                     sh_hekim_as.cell(row=1, column=5).value = str(title_val).replace('EYLÜL', 'EKİM')
@@ -1365,7 +1427,6 @@ elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
                 wb.save(output_as)
                 output_as.seek(0)
 
-                # Tablo Görünümü Hazırlama
                 grid_rows = []
                 for doc_n, days_dict in as_result_grid.items():
                     row_data = {"Hekim Adı Soyadı": doc_n}
@@ -1419,7 +1480,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.subheader("👨‍⚕️ Eğitici Hekim Kadrosu ve İzin Girişi")
     
-    # 📌 Yenilenen varsayılan hekim listesi tanımlaması
     default_egiticiler = [
         "Prof.Dr. Yeşim, ÇEKİN",
         "Prof.Dr. Hatice Nevgün, ÖZEN",
@@ -1454,7 +1514,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # MEVCUT EXCEL ŞABLONUNA %100 UYUMLU FORMAT OLUŞTURUCU
     def generate_egitici_excel(egit_yil, egit_ay, egit_gun_sayisi, egitici_results):
         wb = openpyxl.Workbook()
         default_sheet = wb.active
@@ -1465,7 +1524,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         }
         ilgili_ay_str = f"{ay_adlari_tr[egit_ay]} {egit_yil}"
 
-        # Font Tanımlamaları
         font_header = Font(name="Calibri", size=11, bold=False)
         font_title = Font(name="Calibri", size=11, bold=True)
         font_red = Font(name="Calibri", size=11, bold=True, color="FF0000")
@@ -1474,7 +1532,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         font_val = Font(name="Calibri", size=11)
         font_footer = Font(name="Calibri", size=8.5, italic=False)
 
-        # Stiller
         fill_weekend = PatternFill(start_color="D4D4D4", end_color="D4D4D4", fill_type="solid")
         align_center = Alignment(horizontal="center", vertical="center")
         align_justify = Alignment(horizontal="justify", vertical="center", wrap_text=True)
@@ -1483,7 +1540,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
         for egitici_ad, df_hekim in egitici_results.items():
-            # Sekme Adı Oluşturma
             clean_name = egitici_ad.replace(",", "").replace("-", "")
             parts = clean_name.split()
             sheet_title = parts[1] if len(parts) > 1 else clean_name[:10]
@@ -1492,7 +1548,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             ws = wb.create_sheet(title=sheet_title)
             ws.views.sheetView[0].showGridLines = True
 
-            # 1. Üst Başlıklar (A1:C4 Birleştirilmiş & Ortalanmış)
             ws.merge_cells("A1:C1")
             ws.merge_cells("A2:C2")
             ws.merge_cells("A3:C3")
@@ -1506,13 +1561,11 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             for r in range(1, 5):
                 ws.cell(row=r, column=1).alignment = align_center
 
-            # 2. Çizelge Başlığı (A6:C6 Birleştirilmiş)
             ws.merge_cells("A6:C6")
             c_title = ws.cell(row=6, column=1, value="EĞİTİCİ DESTEKLEME PUAN ÇİZELGESİ")
             c_title.font = font_title
             c_title.alignment = align_center
 
-            # 3. Ad / Soyad Ayrıştırma Mantığı (Esnek Tanımlama Desteği)
             if "," in egitici_ad:
                 p_tokens = egitici_ad.split(",")
                 unvan_ad = p_tokens[0].strip()
@@ -1542,10 +1595,8 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             c_ay = ws.cell(row=10, column=2, value=ilgili_ay_str)
             c_ay.font = font_red
 
-            # 4. Alt Başlık
             ws.cell(row=13, column=1, value="* LABORATUVAR KLİNİKLERİ").font = Font(name="Calibri", size=11, bold=True, underline="single")
 
-            # 5. Tablo Başlıkları
             h1 = ws.cell(row=14, column=1, value="GÜN")
             h2 = ws.cell(row=14, column=2, value="PRATİK EĞİTİM ÇALIŞMASI")
             h3 = ws.cell(row=14, column=3, value="TEORİK EĞİTİM")
@@ -1555,7 +1606,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 h_cell.alignment = align_center
                 h_cell.border = thin_border
 
-            # 6. Tablo Satırları (Günler)
             current_row = 15
             for _, r_data in df_hekim.iterrows():
                 dt_val = r_data["Tarih_Obj"]
@@ -1588,7 +1638,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
                 current_row += 1
 
-            # 7. Dipnot Metni (Genişletilmiş Satır Yüksekliği)
             footer_row = 46
             ws.row_dimensions[footer_row].height = 30
             ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=3)
@@ -1601,7 +1650,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             c_ft.font = font_footer
             c_ft.alignment = align_justify
 
-            # Sütun Genişlikleri
             ws.column_dimensions["A"].width = 18
             ws.column_dimensions["B"].width = 30
             ws.column_dimensions["C"].width = 25
@@ -1612,7 +1660,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         output_e.seek(0)
         return output_e
 
-    # HESAPLAMA BUTONU
     if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt"):
         egitici_results = {}
         hesaplama_hatalari = []
@@ -1636,7 +1683,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         hekim_haftalik_teorik = {e: {w: 0 for w in haftalar} for e in egitici_listesi}
         hekim_toplam_teorik = {e: 0 for e in egitici_listesi}
 
-        # 1. HAFTALIK DENGELİ VE ESNEK TEORİK DERS DAĞITIMI
         for w_num, w_gunleri in haftalar.items():
             for egitici in egitici_listesi:
                 if hekim_toplam_teorik[egitici] >= 8:
@@ -1675,7 +1721,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                         if kalan <= 0:
                             break
 
-        # 2. PRATİK EĞİTİM DAĞITIMI (40 Saat / Aktif Gün Sayısı)
         for egitici in egitici_listesi:
             izinli_gunler = egitici_izinler.get(egitici, set())
             aktif_mesai_gunleri = [d for d in egit_mesai_gunleri if d not in izinli_gunler]
@@ -1708,7 +1753,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             st.balloons()
             st.success("✨ Tüm eğiticiler için resmi Excel şablonu ile tam uyumlu 40s Pratik / 8s Teorik eğitim çizelgeleri oluşturuldu!")
 
-    # SONUÇLARIN İNCELENMESİ VE İNDİRİLMESİ
     if "egitici_sonuc" in st.session_state and st.session_state.egitici_sonuc is not None:
         e_res = st.session_state.egitici_sonuc
         st.markdown("---")
