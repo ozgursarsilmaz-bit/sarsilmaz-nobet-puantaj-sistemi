@@ -1422,9 +1422,9 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     default_egiticiler = [
         "Prof.Dr. Yeşim ÇEKİN",
         "Prof.Dr. H.Nevgün ÖZEN",
-        "C.Aylin ERMAN DALOĞLU",
-        "Uzay HALİL",
-        "Özlem KOCA"
+        "Doç.Dr. C.Aylin ERMAN DALOĞLU",
+        "Doç.Dr. Halil ER",
+        "Baş.As.Doç.Dr. Özlem KOCA"
     ]
     
     egitici_input = st.text_area(
@@ -1579,6 +1579,10 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
             # 7. Dipnot Metni (A46:C46 Birleştirilmiş)
             footer_row = 46
+            
+            # Satır yüksekliğini artırarak metnin görünürlüğünü sağlıyoruz
+            ws.row_dimensions[footer_row].height = 30  # 👈 Yükseklik genişletildi
+
             ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=3)
             c_ft = ws.cell(
                 row=footer_row,
@@ -1586,7 +1590,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 value="*Laboratuvar klinikleri  için 40 saat pratik eğitim çalışması ve 8 saat teorik asistan eğitim çalışması yapıldığının belgelendirmesi halinde eğitici destekleme puanı verilir,"
             )
             c_ft.font = font_footer
-            c_ft.alignment = align_justify
+            c_ft.alignment = Alignment(horizontal="justify", vertical="center", wrap_text=True) # 👈 Dikey hizalama & Metin kaydırma eklendi
 
             # Sütun Genişlikleri
             ws.column_dimensions["A"].width = 18
@@ -1600,7 +1604,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         return output_e
 
     # HESAPLAMA BUTONU
-    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt"):
+    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur"):
         egitici_results = {}
         hesaplama_hatalari = []
 
