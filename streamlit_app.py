@@ -1196,7 +1196,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
         tab1, tab2, tab3, tab4 = st.tabs(["📅 Aylık Çizelge", "📊 İstatistik & Mesai", "📋 Puantaj Matrisi", "📥 Excel İndir"])
         with tab1:
-            st.subheader("🗓️ Birim Bazlı Aylık Görev Listesi (PCR | Mikro | Kültür)")
+            st.subheader("🗓️️ Birim Bazlı Aylık Görev Listesi (PCR | Mikro | Kültür)")
             st.dataframe(sonuc["df_liste"], use_container_width=True, height=450)
         with tab2:
             st.subheader("📈 Personel Mesai Yükü & Acil / Kültür 8s İstatistiği")
@@ -1219,7 +1219,7 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
     <div class="header-box">
         <h1>👨‍⚕️ Uzman Doktor Çalışma ve Nöbet Kodlama Sistemi</h1>
         <p>Klinik Bazlı Çalışma Çizelgesinden Hekim Bazlı L-Kodlu (L-1 - L-20) Çalışma Listesi Oluşturma</p>
-        <div class="header-imza">✍️️ Özgür SARSILMAZ</div>
+        <div class="header-imza">✍️ Özgür SARSILMAZ</div>
     </div>
     """,
         unsafe_allow_html=True,
@@ -1446,7 +1446,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     <div class="header-box">
         <h1>🎓 Eğitici Destekleme Puan Çizelgesi Modülü</h1>
         <p>Haftalara Dengeli Teorik Eğitim (8s) & İzin Durumunda Esnek Gün Dağıtımı & Resmi Şablon Excel Çıktısı</p>
-        <div class="header-imza">✍️️ Özgür SARSILMAZ</div>
+        <div class="header-imza">✍️ Özgür SARSILMAZ</div>
     </div>
     """,
         unsafe_allow_html=True,
@@ -1505,7 +1505,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
         ay_adlari_tr = {
             1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
-            7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+            7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
         }
         ilgili_ay_str = f"{ay_adlari_tr[egit_ay]} {egit_yil}"
 
