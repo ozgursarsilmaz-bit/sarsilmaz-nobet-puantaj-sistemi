@@ -1419,18 +1419,20 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.subheader("👨‍⚕️ Eğitici Hekim Kadrosu ve İzin Girişi")
     
+    # 📌 Yenilenen varsayılan hekim listesi tanımlaması
     default_egiticiler = [
-        "Prof.Dr. Yeşim ÇEKİN",
-        "Prof.Dr. Hatice Nevgün ÖZEN",
-        "Doç.Dr. Cemile Aylin ERMAN DALOĞLU",
-        "Doç.Dr. Halil ER",
-        "Başasistan Doç.Dr. Özlem KOCA"
+        "Prof.Dr. Yeşim, ÇEKİN",
+        "Prof.Dr. H.Nevgün, ÖZEN",
+        "Doç.Dr. Cemile Aylin ERMAN, DALOĞLU",
+        "Uzay, HALİL",
+        "Özlem, KOCA"
     ]
     
     egitici_input = st.text_area(
-        "Eğitici Hekim Listesi (Her satıra bir isim):",
+        "Eğitici Hekim Listesi (Virgül ile Unvan/Ad ve Soyadı ayırabilirsiniz):",
         value="\n".join(default_egiticiler),
         height=140,
+        help="Çift soyadlı hekimlerde soyadı doğru ayrıştırmak için 'Unvan Ad, SOYAD' şeklinde virgül koyabilirsiniz.",
         key="egitici_list_input"
     )
     egitici_listesi = [h.strip() for h in egitici_input.split("\n") if h.strip()]
@@ -1470,7 +1472,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         font_table_hdr = Font(name="Calibri", size=11, bold=True)
         font_date = Font(name="Times New Roman", size=11)
         font_val = Font(name="Calibri", size=11)
-        font_footer = Font(name="Calibri", size=8, italic=False)
+        font_footer = Font(name="Calibri", size=8.5, italic=False)
 
         # Stiller
         fill_weekend = PatternFill(start_color="D4D4D4", end_color="D4D4D4", fill_type="solid")
@@ -1481,8 +1483,10 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
         for egitici_ad, df_hekim in egitici_results.items():
-            parts = egitici_ad.split()
-            sheet_title = parts[1] if len(parts) > 1 else egitici_ad[:10]
+            # Sekme Adı Oluşturma
+            clean_name = egitici_ad.replace(",", "").replace("-", "")
+            parts = clean_name.split()
+            sheet_title = parts[1] if len(parts) > 1 else clean_name[:10]
             sheet_title = sheet_title.replace(".", "").replace("/", "")[:12]
 
             ws = wb.create_sheet(title=sheet_title)
@@ -1508,13 +1512,22 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             c_title.font = font_title
             c_title.alignment = align_center
 
-            # 3. Ad / Soyad / Klinik / İlgili Ay
-            unvan_ad = egitici_ad
-            soyad = ""
-            if " " in egitici_ad:
+            # 3. Ad / Soyad Ayrıştırma Mantığı (Esnek Tanımlama Desteği)
+            if "," in egitici_ad:
+                p_tokens = egitici_ad.split(",")
+                unvan_ad = p_tokens[0].strip()
+                soyad = p_tokens[1].strip()
+            elif "-" in egitici_ad:
+                p_tokens = egitici_ad.split("-")
+                unvan_ad = p_tokens[0].strip()
+                soyad = p_tokens[1].strip()
+            elif "ERMAN DALOĞLU" in egitici_ad.upper():
+                soyad = "DALOĞLU"
+                unvan_ad = egitici_ad.upper().replace("DALOĞLU", "").strip()
+            else:
                 p_tokens = egitici_ad.split()
-                soyad = p_tokens[-1]
-                unvan_ad = " ".join(p_tokens[:-1])
+                soyad = p_tokens[-1] if len(p_tokens) > 1 else ""
+                unvan_ad = " ".join(p_tokens[:-1]) if len(p_tokens) > 1 else egitici_ad
 
             ws.cell(row=7, column=1, value="ADI :").font = font_header
             ws.cell(row=7, column=2, value=unvan_ad).font = font_header
@@ -1527,7 +1540,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
             ws.cell(row=10, column=1, value="İLGİLİ AY :").font = font_header
             c_ay = ws.cell(row=10, column=2, value=ilgili_ay_str)
-            c_ay.font = font_red # Kırmızı font[cite: 4]
+            c_ay.font = font_red
 
             # 4. Alt Başlık
             ws.cell(row=13, column=1, value="* LABORATUVAR KLİNİKLERİ").font = Font(name="Calibri", size=11, bold=True, underline="single")
@@ -1548,28 +1561,26 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 dt_val = r_data["Tarih_Obj"]
                 pratik_v = r_data["Pratik"]
                 teorik_v = r_data["Teorik"]
-                is_weekend = dt_val.weekday() >= 5 # Cumartesi / Pazar
+                is_weekend = dt_val.weekday() >= 5
 
-                # Gün Hücresi
+                ws.row_dimensions[current_row].height = 19
+
                 c_day = ws.cell(row=current_row, column=1, value=dt_val)
-                c_day.number_format = 'd.mm.yyyy' # 1.09.2026 Formatı[cite: 4]
+                c_day.number_format = 'd.mm.yyyy'
                 c_day.font = font_date
                 c_day.alignment = align_center
                 c_day.border = thin_border
 
-                # Pratik Hücresi
                 c_pratik = ws.cell(row=current_row, column=2, value=pratik_v if pratik_v > 0 else None)
                 c_pratik.font = font_val
                 c_pratik.alignment = align_center
                 c_pratik.border = thin_border
 
-                # Teorik Hücresi
                 c_teorik = ws.cell(row=current_row, column=3, value=teorik_v if teorik_v > 0 else None)
                 c_teorik.font = font_val
                 c_teorik.alignment = align_center
                 c_teorik.border = thin_border
 
-                # Hafta sonu ise Gri Dolgu uygula[cite: 4]
                 if is_weekend:
                     c_day.fill = fill_weekend
                     c_pratik.fill = fill_weekend
@@ -1577,20 +1588,18 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
                 current_row += 1
 
-            # 7. Dipnot Metni (A46:C46 Birleştirilmiş)
+            # 7. Dipnot Metni (Genişletilmiş Satır Yüksekliği)
             footer_row = 46
-            
-            # Satır yüksekliğini artırarak metnin görünürlüğünü sağlıyoruz
-            ws.row_dimensions[footer_row].height = 30  # 👈 Yükseklik genişletildi
-
+            ws.row_dimensions[footer_row].height = 30
             ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=3)
+            
             c_ft = ws.cell(
                 row=footer_row,
                 column=1,
                 value="*Laboratuvar klinikleri  için 40 saat pratik eğitim çalışması ve 8 saat teorik asistan eğitim çalışması yapıldığının belgelendirmesi halinde eğitici destekleme puanı verilir,"
             )
             c_ft.font = font_footer
-            c_ft.alignment = Alignment(horizontal="justify", vertical="center", wrap_text=True) # 👈 Dikey hizalama & Metin kaydırma eklendi
+            c_ft.alignment = align_justify
 
             # Sütun Genişlikleri
             ws.column_dimensions["A"].width = 18
@@ -1604,7 +1613,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         return output_e
 
     # HESAPLAMA BUTONU
-    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur"):
+    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt"):
         egitici_results = {}
         hesaplama_hatalari = []
 
