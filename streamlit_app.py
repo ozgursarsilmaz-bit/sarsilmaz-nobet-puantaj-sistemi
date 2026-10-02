@@ -447,117 +447,116 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         return toplam_saat
 
     def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
-    aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+        aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
-    norm_gece = 0
-    norm_normal = 0
-    risk_gece = 0
-    risk_normal = 0
+        norm_gece = 0
+        norm_normal = 0
+        risk_gece = 0
+        risk_normal = 0
 
-    # 1. Ham Nöbet Saatlerinin Dağıtılması
-    for d in range(1, gun_sayisi + 1):
-        val = str(p_row_dict.get(str(d), "")).strip()
+        # 1. Ham Nöbet Saatlerinin Dağıtılması
+        for d in range(1, gun_sayisi + 1):
+            val = str(p_row_dict.get(str(d), "")).strip()
 
-        dt = datetime.date(yil, ay, d)
-        weekday = dt.weekday()
-        is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
-        is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else True  # Ayın son günü ertesi gün hafta sonu ise True
-        is_risk = d in acil_days_set
+            dt = datetime.date(yil, ay, d)
+            weekday = dt.weekday()
+            is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
+            is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else True
+            is_risk = d in acil_days_set
 
-        if val == "24":
-            if d == 5 and d in yarim_gun_tatil_gunleri:
-                g_saat, n_saat = 8, 3
-            elif d in yarim_gun_tatil_gunleri:
-                g_saat, n_saat = 12, 7
-            elif d == gun_sayisi and not is_next_day_off:
-                g_saat, n_saat = 12, 4
-            elif is_off or weekday == 5: # Cumartesi veya Tatil günü nöbeti
-                g_saat, n_saat = 12, 12
-            elif weekday in [0, 1, 2, 3]: # Pzt-Per
-                g_saat, n_saat = 8, 0
-            elif weekday in [4, 6]: # Cuma ve Pazar
-                g_saat, n_saat = 12, 4
+            if val == "24":
+                if d == 5 and d in yarim_gun_tatil_gunleri:
+                    g_saat, n_saat = 8, 3
+                elif d in yarim_gun_tatil_gunleri:
+                    g_saat, n_saat = 12, 7
+                elif d == gun_sayisi and not is_next_day_off:
+                    g_saat, n_saat = 12, 4
+                elif is_off or weekday == 5:
+                    g_saat, n_saat = 12, 12
+                elif weekday in [0, 1, 2, 3]:
+                    g_saat, n_saat = 8, 0
+                elif weekday in [4, 6]:
+                    g_saat, n_saat = 12, 4
+                else:
+                    g_saat, n_saat = 12, 4
+
+                if is_risk:
+                    risk_gece += g_saat
+                    risk_normal += n_saat
+                else:
+                    norm_gece += g_saat
+                    norm_normal += n_saat
+
+            elif val == "8" and d in kultur_8s_tatil_gunleri:
+                norm_normal += 8
+
+        # 2. Akıllı Devir Nİ Mahsuplaşması
+        is_devir_normal = p_name in gecmis_ay_son_gun_normal
+        is_devir_acil = p_name in gecmis_ay_son_gun_acil
+
+        if is_devir_normal or is_devir_acil:
+            dusulecek_saat = 8
+
+            if is_devir_acil:
+                dusulen_norm_gece = min(4, risk_gece)
+                risk_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
+
+                dusulen_norm_normal = min(4, risk_normal)
+                risk_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
+
+                if dusulecek_saat > 0 and risk_gece > 0:
+                    ek_dusu = min(dusulecek_saat, risk_gece)
+                    risk_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
+
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, norm_gece)
+                    norm_gece -= d_gece
+                    dusulecek_saat -= d_gece
+
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, norm_normal)
+                    norm_normal -= d_norm
+                    dusulecek_saat -= d_norm
+
             else:
-                g_saat, n_saat = 12, 4
+                dusulen_norm_gece = min(4, norm_gece)
+                norm_gece -= dusulen_norm_gece
+                dusulecek_saat -= dusulen_norm_gece
 
-            if is_risk:
-                risk_gece += g_saat
-                risk_normal += n_saat
-            else:
-                norm_gece += g_saat
-                norm_normal += n_saat
+                dusulen_norm_normal = min(4, norm_normal)
+                norm_normal -= dusulen_norm_normal
+                dusulecek_saat -= dusulen_norm_normal
 
-        elif val == "8" and d in kultur_8s_tatil_gunleri:
-            # Sadece resmi tatillerde tutulan manuel Kültür 8s vardiyası nöbet saatine eklenir
-            norm_normal += 8
+                if dusulecek_saat > 0 and norm_gece > 0:
+                    ek_dusu = min(dusulecek_saat, norm_gece)
+                    norm_gece -= ek_dusu
+                    dusulecek_saat -= ek_dusu
 
-    # 2. Akıllı Devir Nİ Mahsuplaşması
-    is_devir_normal = p_name in gecmis_ay_son_gun_normal
-    is_devir_acil = p_name in gecmis_ay_son_gun_acil
+                if dusulecek_saat > 0:
+                    d_gece = min(dusulecek_saat, risk_gece)
+                    risk_gece -= d_gece
+                    dusulecek_saat -= d_gece
 
-    if is_devir_normal or is_devir_acil:
-        dusulecek_saat = 8
+                if dusulecek_saat > 0:
+                    d_norm = min(dusulecek_saat, risk_normal)
+                    risk_normal -= d_norm
+                    dusulecek_saat -= d_norm
 
-        if is_devir_acil:
-            dusulen_norm_gece = min(4, risk_gece)
-            risk_gece -= dusulen_norm_gece
-            dusulecek_saat -= dusulen_norm_gece
+        fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
+        toplam_calisma = aylik_hedef_saat + fazla_nobet
 
-            dusulen_norm_normal = min(4, risk_normal)
-            risk_normal -= dusulen_norm_normal
-            dusulecek_saat -= dusulen_norm_normal
-
-            if dusulecek_saat > 0 and risk_gece > 0:
-                ek_dusu = min(dusulecek_saat, risk_gece)
-                risk_gece -= ek_dusu
-                dusulecek_saat -= ek_dusu
-
-            if dusulecek_saat > 0:
-                d_gece = min(dusulecek_saat, norm_gece)
-                norm_gece -= d_gece
-                dusulecek_saat -= d_gece
-
-            if dusulecek_saat > 0:
-                d_norm = min(dusulecek_saat, norm_normal)
-                norm_normal -= d_norm
-                dusulecek_saat -= d_norm
-
-        else:
-            dusulen_norm_gece = min(4, norm_gece)
-            norm_gece -= dusulen_norm_gece
-            dusulecek_saat -= dusulen_norm_gece
-
-            dusulen_norm_normal = min(4, norm_normal)
-            norm_normal -= dusulen_norm_normal
-            dusulecek_saat -= dusulen_norm_normal
-
-            if dusulecek_saat > 0 and norm_gece > 0:
-                ek_dusu = min(dusulecek_saat, norm_gece)
-                norm_gece -= ek_dusu
-                dusulecek_saat -= ek_dusu
-
-            if dusulecek_saat > 0:
-                d_gece = min(dusulecek_saat, risk_gece)
-                risk_gece -= d_gece
-                dusulecek_saat -= d_gece
-
-            if dusulecek_saat > 0:
-                d_norm = min(dusulecek_saat, risk_normal)
-                risk_normal -= d_norm
-                dusulecek_saat -= d_norm
-
-    fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
-    toplam_calisma = aylik_hedef_saat + fazla_nobet
-
-    return {
-        "Toplam Çalışma Saati": toplam_calisma,
-        "Aylık Çalışma Saati": aylik_hedef_saat,
-        "Fazla Nöbet Saati": fazla_nobet,
-        "Normal_Gece": norm_gece,
-        "Normal_Normal": norm_normal,
-        "Riskli_Gece": risk_gece,
-        "Riskli_Normal": risk_normal,
-    }
+        return {
+            "Toplam Çalışma Saati": toplam_calisma,
+            "Aylık Çalışma Saati": aylik_hedef_saat,
+            "Fazla Nöbet Saati": fazla_nobet,
+            "Normal_Gece": norm_gece,
+            "Normal_Normal": norm_normal,
+            "Riskli_Gece": risk_gece,
+            "Riskli_Normal": risk_normal,
+        }
 
     def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
         wb = openpyxl.Workbook()
@@ -1220,7 +1219,7 @@ elif secilen_modul == "2. Uzman Dr. Çalışma Listesi":
     <div class="header-box">
         <h1>👨‍⚕️ Uzman Doktor Çalışma ve Nöbet Kodlama Sistemi</h1>
         <p>Klinik Bazlı Çalışma Çizelgesinden Hekim Bazlı L-Kodlu (L-1 - L-20) Çalışma Listesi Oluşturma</p>
-        <div class="header-imza">✍️ Özgür SARSILMAZ</div>
+        <div class="header-imza">✍️️ Özgür SARSILMAZ</div>
     </div>
     """,
         unsafe_allow_html=True,
@@ -1447,7 +1446,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     <div class="header-box">
         <h1>🎓 Eğitici Destekleme Puan Çizelgesi Modülü</h1>
         <p>Haftalara Dengeli Teorik Eğitim (8s) & İzin Durumunda Esnek Gün Dağıtımı & Resmi Şablon Excel Çıktısı</p>
-        <div class="header-imza">✍️ Özgür SARSILMAZ</div>
+        <div class="header-imza">✍️️ Özgür SARSILMAZ</div>
     </div>
     """,
         unsafe_allow_html=True,
