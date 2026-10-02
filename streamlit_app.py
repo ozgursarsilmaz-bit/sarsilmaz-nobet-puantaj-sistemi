@@ -489,7 +489,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             elif val == "8" and d in kultur_8s_tatil_gunleri:
                 norm_normal += 8
 
-        # 🎯 OK İŞARETLİ ALAN DÜZELTİLDİ: Kırmızı kutunun (4 nöbet türünün) toplamı olarak ayarlandı[cite: 4]
         fazla_nobet = norm_gece + norm_normal + risk_gece + risk_normal
 
         return {
@@ -1030,7 +1029,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     })
                 df_liste = pd.DataFrame(liste_data)
 
-                # 🎯 DÜZELTME: gunler_listesi değişkeni eklendi (NameError önlendi)[cite: 5]
                 gunler_listesi = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
                 columns_tuples = [("AD SOYAD", ""), ("Birim", "")]
                 for g in gunler_listesi: columns_tuples.extend([(g, "Devir"), (g, "Bu Ay"), (g, "Toplam")])
@@ -1388,6 +1386,11 @@ elif secilen_modul == "3. Asistan Dr. Çalışma Listesi":
                 as_file_name = "As.Dr._Calisma_Listesi_10.2026_Kodlanmis.xlsx"
                 href_as = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_as}" download="{as_file_name}" class="direct-download-btn">📥 Kodlanmış Asistan Dr. Excel Dosyasını İndir (.xlsx)</a>'
                 st.markdown(href_as, unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"❌ Dosya işlenirken bir hata oluştu: {e}")
+
+
 # ==========================================
 # 4. MODÜL: EĞİTİCİ DESTEKLEME PUAN ÇİZELGESİ
 # ==========================================
@@ -1412,7 +1415,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     _, egit_gun_sayisi = calendar.monthrange(egit_yil, egit_ay)
     egit_tum_tarihler = [datetime.date(egit_yil, egit_ay, d) for d in range(1, egit_gun_sayisi + 1)]
-    # Hafta içi günler (0: Pazartesi ... 4: Cuma)
     egit_mesai_gunleri = [d for d in egit_tum_tarihler if d.weekday() < 5]
 
     st.subheader("👨‍⚕️ Eğitici Hekim Kadrosu ve İzin Girişi")
@@ -1438,7 +1440,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     st.info("💡 Hekimlerin ilgili ayda izinli/raporlu/kongrede oldukları günleri seçiniz. Sistem, izinli günler dışında kalan aktif günlere 40s Pratik + 8s Teorik eğitimi eşit dağıtacaktır.")
 
     egitici_izinler = {}
-    cols_per_row = 2
     for idx, egitici in enumerate(egitici_listesi):
         with st.expander(f"🔴 {egitici} - İzin Günleri Tanımla", expanded=False):
             selected_leaves = st.multiselect(
@@ -1453,7 +1454,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     def generate_egitici_excel(egit_yil, egit_ay, egit_gun_sayisi, egitici_results):
         wb = openpyxl.Workbook()
-        # İlk boş sayfayı silmek üzere referans
         default_sheet = wb.active
 
         ay_adlari_tr = {
@@ -1469,7 +1469,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         font_footer = Font(name="Calibri", size=9, italic=True)
 
         align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        align_left = Alignment(horizontal="left", vertical="center")
         
         thin_border = Border(
             left=Side(style='thin', color='000000'),
@@ -1479,7 +1478,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         )
 
         for egitici_ad, df_hekim in egitici_results.items():
-            # Sekme adını oluştur (Uzun isimleri kısalt)
             parts = egitici_ad.split()
             sheet_title = parts[1] if len(parts) > 1 else egitici_ad[:10]
             sheet_title = sheet_title.replace(".", "").replace("/", "")[:12]
@@ -1487,7 +1485,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             ws = wb.create_sheet(title=sheet_title)
             ws.views.sheetView[0].showGridLines = True
 
-            # Header Üst Bilgiler
             ws.cell(row=1, column=1, value="T.C.").font = font_header_bold
             ws.cell(row=2, column=1, value="ANTALYA VALİLİĞİ").font = font_header_bold
             ws.cell(row=3, column=1, value="İl Sağlık Müdürlüğü").font = font_header_bold
@@ -1495,7 +1492,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
             ws.cell(row=6, column=1, value="EĞİTİCİ DESTEKLEME PUAN ÇİZELGESİ").font = font_title_bold
 
-            # Unvan/Ad/Soyad Ayırma
             unvan_ad = egitici_ad
             soyad = ""
             if " " in egitici_ad:
@@ -1517,7 +1513,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
             ws.cell(row=13, column=1, value="* LABORATUVAR KLİNİKLERİ").font = font_bold
 
-            # Tablo Başlıkları
             h1 = ws.cell(row=14, column=1, value="GÜN")
             h2 = ws.cell(row=14, column=2, value="PRATİK EĞİTİM ÇALIŞMASI")
             h3 = ws.cell(row=14, column=3, value="TEORİK EĞİTİM")
@@ -1527,7 +1522,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 h_cell.alignment = align_center
                 h_cell.border = thin_border
 
-            # Günlük Satırların Doldurulması
             current_row = 15
             for _, r_data in df_hekim.iterrows():
                 dt_val = r_data["Tarih_Obj"]
@@ -1552,7 +1546,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
                 current_row += 1
 
-            # Alt Açıklama / Dipnot
             footer_row = current_row + 1
             ws.cell(
                 row=footer_row,
@@ -1570,7 +1563,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         output_e.seek(0)
         return output_e
 
-    # DAĞITIM HESAPLAMA BUTONU
     if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt"):
         egitici_results = {}
         hesaplama_hatalari = []
@@ -1583,17 +1575,13 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 hesaplama_hatalari.append(f"❌ **{egitici}**: İzinler sebebiyle aktif gün sayısı yetersiz ({len(aktif_mesai_gunleri)} gün). En az 4 aktif mesai günü gereklidir!")
                 continue
 
-            # Gün bazlı çizelge verisi hazırlığı
             df_h = pd.DataFrame({"Tarih_Obj": egit_tum_tarihler})
             df_h["Tarih"] = df_h["Tarih_Obj"].apply(lambda d: d.strftime("%d.%m.%Y"))
             df_h["Gün Adı"] = df_h["Tarih_Obj"].apply(lambda d: tr_gunler[d.weekday()])
             df_h["Pratik"] = 0
             df_h["Teorik"] = 0
 
-            # 1. TEORİK EĞİTİM DAĞITIMI (Toplam 8 Saat)
-            # Aktif günlerden teorik ders verilecek günlerin seçimi (Örn: Salı veya ilk aktif günlerden haftada 1 gün x 2s)
             teorik_kalan = 8
-            # Salı günlerine öncelik ver, yoksa ilk aktif günlere dağıt
             sali_aktifler = [d for d in aktif_mesai_gunleri if d.weekday() == 1]
             teorik_hedef_gunler = sali_aktifler if len(sali_aktifler) >= 4 else aktif_mesai_gunleri
 
@@ -1602,7 +1590,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                     df_h.loc[df_h["Tarih_Obj"] == d, "Teorik"] = 2
                     teorik_kalan -= 2
 
-            # Eğer hâlâ kalan teorik saat varsa diğer aktif günlere 2'şer saat ekle
             if teorik_kalan > 0:
                 for d in aktif_mesai_gunleri:
                     if df_h.loc[df_h["Tarih_Obj"] == d, "Teorik"].values[0] == 0:
@@ -1610,8 +1597,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                         teorik_kalan -= min(2, teorik_kalan)
                         if teorik_kalan <= 0: break
 
-            # 2. PRATİK EĞİTİM DAĞITIMI (Toplam 40 Saat)
-            # 40 saati aktif günlere eşit/dengeli dağıtma
             num_aktif = len(aktif_mesai_gunleri)
             base_p = 40 // num_aktif
             extra_p = 40 % num_aktif
@@ -1637,7 +1622,6 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             st.balloons()
             st.success("✨ Tüm eğiticiler için 40s Pratik ve 8s Teorik eğitim çizelgeleri başarıyla oluşturuldu!")
 
-    # SONUÇLARIN İNCELENMESİ VE İNDİRİLMESİ
     if "egitici_sonuc" in st.session_state and st.session_state.egitici_sonuc is not None:
         e_res = st.session_state.egitici_sonuc
         st.markdown("---")
@@ -1666,5 +1650,3 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         egit_file_name = f"Egitici_Destekleme_Puan_Cizelgesi_{e_res['ay']}_{e_res['yil']}.xlsx"
         href_egit = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_egit}" download="{egit_file_name}" class="direct-download-btn">📥 Eğitici Destekleme Resmi Excel Dosyasını İndir (.xlsx)</a>'
         st.markdown(href_egit, unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"❌ Dosya işlenirken bir hata oluştu: {e}")
