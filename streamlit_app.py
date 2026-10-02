@@ -1399,7 +1399,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         """
     <div class="header-box">
         <h1>🎓 Eğitici Destekleme Puan Çizelgesi Modülü</h1>
-        <p>Hekim Bazlı İzin Günleri Tespiti & Günlere Dönüşümlü (Rotasyonlu) 40s Pratik ve 8s Teorik Eğitim Dağıtımı</p>
+        <p>Haftalara Dengeli Teorik Eğitim (8s) & İzin Durumunda Esnek Gün Dağıtımı & Adil Pratik Eğitim (40s)</p>
         <div class="header-imza">✍️ Özgür SARSILMAZ</div>
     </div>
     """,
@@ -1422,9 +1422,9 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     default_egiticiler = [
         "Prof.Dr. Yeşim ÇEKİN",
         "Prof.Dr. H.Nevgün ÖZEN",
-        "C.Aylin ERMAN DALOĞLU",
-        "Uzay HALİL",
-        "Özlem KOCA"
+        "Doç.Dr. C.Aylin ERMAN DALOĞLU",
+        "Doç.Dr. Halil ER",
+        "Baş.As.Doç.Dr. Özlem KOCA"
     ]
     
     egitici_input = st.text_area(
@@ -1437,7 +1437,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
 
     st.markdown("---")
     st.markdown('<div class="section-title">🏖️ Hekim Bazlı İzinli Gün Seçimi</div>', unsafe_allow_html=True)
-    st.info("💡 Hekimlerin ilgili ayda izinli/raporlu/kongrede oldukları günleri seçiniz. Teorik dersler (8 saat) mesai günlerine hekimler arasında dönüşümlü (sırayla 2'şer saat) dağıtılacak, kalan sürede 40 saatlik pratik eğitim tamamlanacaktır.")
+    st.info("💡 Hekimlerin izinli/görevli olduğu günleri seçiniz. Normal şartlarda günde en fazla 1 hekime teorik ders yazılır; ancak izinler çakıştığında sistem kuralı esneterek aynı güne birden fazla hekimin dersini yazabilir.")
 
     egitici_izinler = {}
     for idx, egitici in enumerate(egitici_listesi):
@@ -1568,7 +1568,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         egitici_results = {}
         hesaplama_hatalari = []
 
-        # Her hekim için boş veri çerçevesi (DataFrame) oluştur
+        # Veri yapılarını başlat
         for egitici in egitici_listesi:
             df_h = pd.DataFrame({"Tarih_Obj": egit_tum_tarihler})
             df_h["Tarih"] = df_h["Tarih_Obj"].apply(lambda d: d.strftime("%d.%m.%Y"))
@@ -1577,34 +1577,59 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
             df_h["Teorik"] = 0
             egitici_results[egitici] = df_h
 
-        # 1. DÖNÜŞÜMLÜ TEORİK EĞİTİM DAĞITIMI (Her hekim için 8 saat = 4 x 2s)
-        kalan_teorik_saatler = {egitici: 8 for egitici in egitici_listesi}
-        
+        # Mesai günlerini haftalara grupla
+        haftalar = {}
         for d in egit_mesai_gunleri:
-            # O gün henüz 8 saatini doldurmamış ve izinli olmayan hekimleri bul
-            musait_egiticiler = [
-                e for e in egitici_listesi 
-                if d not in egitici_izinler.get(e, set()) and kalan_teorik_saatler[e] >= 2
-            ]
-            
-            if musait_egiticiler:
-                # Teorik saati en çok kalana/sıradakine 2 saat ver
-                secilen = max(musait_egiticiler, key=lambda e: kalan_teorik_saatler[e])
-                df_target = egitici_results[secilen]
-                df_target.loc[df_target["Tarih_Obj"] == d, "Teorik"] = 2
-                kalan_teorik_saatler[secilen] -= 2
+            w_num = d.isocalendar()[1]
+            if w_num not in haftalar:
+                haftalar[w_num] = []
+            haftalar[w_num].append(d)
 
-        # Eksik kalan teorik saat var mı kontrol et
-        for egitici, kalan in kalan_teorik_saatler.items():
-            if kalan > 0:
-                # İzinli olmadığı herhangi boş güne tamamla
+        # Günlük atanan teorik ders sayısını takip et
+        gunluk_teorik_sayisi = {d: 0 for d in egit_mesai_gunleri}
+        hekim_haftalik_teorik = {e: {w: 0 for w in haftalar} for e in egitici_listesi}
+        hekim_toplam_teorik = {e: 0 for e in egitici_listesi}
+
+        # 1. HAFTALIK DENGELİ VE ESNEK TEORİK DERS DAĞITIMI
+        for w_num, w_gunleri in haftalar.items():
+            for egitici in egitici_listesi:
+                if hekim_toplam_teorik[egitici] >= 8:
+                    continue
+                if hekim_haftalik_teorik[egitici][w_num] >= 2:
+                    continue
+
+                # 1. Öncelik: Çakışmasız (O gün henüz ders yazılmamış) ve hekimin izinli olmadığı boş gün
+                atanan_gun = None
+                for d in w_gunleri:
+                    if gunluk_teorik_sayisi[d] == 0 and d not in egitici_izinler.get(egitici, set()):
+                        atanan_gun = d
+                        break
+
+                # 2. Öncelik (Kural Esnetme): Eğer çakışmasız gün yoksa, izinli olmadığı en az ders yazılmış güne esnet
+                if atanan_gun is None:
+                    musait_gunler = [d for d in w_gunleri if d not in egitici_izinler.get(egitici, set())]
+                    if musait_gunler:
+                        atanan_gun = min(musait_gunler, key=lambda d: gunluk_teorik_sayisi[d])
+
+                if atanan_gun is not None:
+                    df_target = egitici_results[egitici]
+                    df_target.loc[df_target["Tarih_Obj"] == atanan_gun, "Teorik"] = 2
+                    gunluk_teorik_sayisi[atanan_gun] += 1
+                    hekim_haftalik_teorik[egitici][w_num] += 2
+                    hekim_toplam_teorik[egitici] += 2
+
+        # Eksik kalan teorik saati olan hekim var ise ayın kalan boş günlerine (esneterek) tamamla
+        for egitici, t_saat in hekim_toplam_teorik.items():
+            if t_saat < 8:
+                kalan = 8 - t_saat
                 aktif_g = [d for d in egit_mesai_gunleri if d not in egitici_izinler.get(egitici, set())]
                 for d in aktif_g:
                     df_target = egitici_results[egitici]
                     if df_target.loc[df_target["Tarih_Obj"] == d, "Teorik"].values[0] == 0:
                         df_target.loc[df_target["Tarih_Obj"] == d, "Teorik"] = 2
-                        kalan_teorik_saatler[egitici] -= 2
-                        if kalan_teorik_saatler[egitici] <= 0:
+                        gunluk_teorik_sayisi[d] += 1
+                        kalan -= 2
+                        if kalan <= 0:
                             break
 
         # 2. PRATİK EĞİTİM DAĞITIMI (40 Saat / Aktif Gün Sayısı)
@@ -1638,7 +1663,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 "ay": egit_ay
             }
             st.balloons()
-            st.success("✨ Tüm eğiticiler için günlere dönüşümlü 40s Pratik ve 8s Teorik eğitim çizelgeleri oluşturuldu!")
+            st.success("✨ Tüm eğiticiler için haftalara dengeli ve esnek 40s Pratik / 8s Teorik eğitim çizelgeleri oluşturuldu!")
 
     # SONUÇLARIN İNCELENMESİ VE İNDİRİLMESİ
     if "egitici_sonuc" in st.session_state and st.session_state.egitici_sonuc is not None:
