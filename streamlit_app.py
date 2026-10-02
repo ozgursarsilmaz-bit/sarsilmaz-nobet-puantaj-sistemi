@@ -390,25 +390,68 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Kişiler Arası Kısıtlar
+   # Kişiler Arası Kısıtlar
     st.markdown('<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı Kuralları</div>', unsafe_allow_html=True)
-    if "kisi_kisit_sayisi" not in st.session_state: st.session_state.kisi_kisit_sayisi = 1
-    def kisit_ekle(): st.session_state.kisi_kisit_sayisi += 1
-    def kisit_cikar():
-        if st.session_state.kisi_kisit_sayisi > 1: st.session_state.kisi_kisit_sayisi -= 1
+    
+    # Session state üzerinde listemizi başlatıyoruz
+    if "kisi_kisit_listesi" not in st.session_state:
+        st.session_state.kisi_kisit_listesi = [{"ana": "Seçiniz...", "aralik": 1, "yasaklilar": []}]
+
+    # Yeni boş kısıt satırı ekleme fonksiyonu
+    def kisi_kisit_satir_ekle():
+        st.session_state.kisi_kisit_listesi.append({"ana": "Seçiniz...", "aralik": 1, "yasaklilar": []})
 
     kisi_kisitlari = []
-    for k_idx in range(st.session_state.kisi_kisit_sayisi):
-        c1, c2, c3 = st.columns([1.2, 1, 2])
-        with c1: p_ana = st.selectbox(f"Ana Personel #{k_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
-        with c2: min_aralik = st.number_input(f"Min. Mesafe (Gün) #{k_idx+1}:", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
-        with c3: p_yasakli_list = st.multiselect(f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
+    
+    # Tüm kısıtları dinamik olarak ekrana basıyoruz
+    for k_idx, kisit_data in enumerate(st.session_state.kisi_kisit_listesi):
+        c1, c2, c3, c4 = st.columns([1.2, 0.8, 2, 0.5])
+        
+        with c1:
+            p_ana = st.selectbox(
+                f"Ana Personel #{k_idx+1}:",
+                options=["Seçiniz..."] + nobetci_personeller,
+                index=["Seçiniz..."] + nobetci_personeller.index(kisit_data["ana"]) if kisit_data["ana"] in nobetci_personeller else 0,
+                key=f"p_ana_{k_idx}"
+            )
+            st.session_state.kisi_kisit_listesi[k_idx]["ana"] = p_ana
+
+        with c2:
+            min_aralik = st.number_input(
+                f"Min. Mesafe #{k_idx+1}:",
+                min_value=0,
+                max_value=15,
+                value=int(kisit_data["aralik"]),
+                key=f"min_aralik_{k_idx}"
+            )
+            st.session_state.kisi_kisit_listesi[k_idx]["aralik"] = min_aralik
+
+        with c3:
+            p_yasakli_options = [p for p in nobetci_personeller if p != p_ana]
+            valid_yasaklilar = [p for p in kisit_data["yasaklilar"] if p in p_yasakli_options]
+            
+            p_yasakli_list = st.multiselect(
+                f"Yasaklı Kişiler #{k_idx+1}:",
+                options=p_yasakli_options,
+                default=valid_yasaklilar,
+                key=f"p_yasakli_{k_idx}"
+            )
+            st.session_state.kisi_kisit_listesi[k_idx]["yasaklilar"] = p_yasakli_list
+
+        with c4:
+            st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+            # Aradan silme işlemi yapan satır bazlı buton
+            if st.button("❌", key=f"btn_kisi_sil_{k_idx}", help="Bu kısıtı sil"):
+                st.session_state.kisi_kisit_listesi.pop(k_idx)
+                st.rerun()
+
+        # Solver'a gidecek geçerli kısıtları topluyoruz
         if p_ana != "Seçiniz..." and p_yasakli_list:
             kisi_kisitlari.append({"ana": p_ana, "aralik": min_aralik, "yasaklilar": p_yasakli_list})
 
-    col_btn1, col_btn2, _ = st.columns([1, 1, 4])
-    with col_btn1: st.button("➕ Yeni Kısıt Ekle", on_click=kisit_ekle)
-    with col_btn2: st.button("➖ Kısıt Sil", on_click=kisit_cikar)
+    col_btn1, _ = st.columns([1.5, 4.5])
+    with col_btn1:
+        st.button("➕ Yeni Kısıt Ekle", on_click=kisi_kisit_satir_ekle)
 
     st.markdown("<br>", unsafe_allow_html=True)
     m1, m2, m3, m4, m5, m6 = st.columns(6)
