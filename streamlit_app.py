@@ -451,8 +451,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         next_dt = dt + datetime.timedelta(days=1)
         next_off = next_dt.weekday() >= 5 or (
             next_dt.month == ay and next_dt.day in resmi_tatil_gunleri)
-        if day == 5 and day in yarim_gun_tatil_gunleri:
-            return 8, 3
         if day in yarim_gun_tatil_gunleri:
             return 12, 7
         if day == gun_sayisi and not next_off:
@@ -460,6 +458,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         if is_day_off(yil, ay, day, resmi_tatil_gunleri):
             return (12, 12) if next_off else (12, 4)
         if dt.weekday() < 4:
+            # Ertesi gün yarım gün mesai (5s) ise Nİ karşılığı 5s olur.
+            # Olağan 8s mesaiye göre kalan 3s normal hakedişe eklenir.
+            if next_dt.month == ay and next_dt.day in yarim_gun_tatil_gunleri and not next_off:
+                return 8, 3
             return 8, 0
         return 12, 4
 
