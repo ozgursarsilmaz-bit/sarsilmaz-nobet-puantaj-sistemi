@@ -473,7 +473,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         return ni_gunleri
 
     def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, kultur_8s_vardiyalari=None):
-        kultur_8s_vardiyalari = set(kultur_8s_vardiyalari or ())
         aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
         toplam_calisma = 0
@@ -486,9 +485,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         for d in range(1, gun_sayisi + 1):
             val = str(p_row_dict.get(str(d), "")).strip()
 
-            # Kültür 8s yalnızca hücrede gösterilir; saat toplamlarına girmez.
-            # Nİ için ayrıca saat düşümü yapılmaz.
-            if d not in kultur_8s_vardiyalari and val in ["8", "5", "16", "19", "11", "24"]:
+            # Kültür 8s dahil çalışılan saatler toplama girer.
+            # İlk mesai günündeki Nİ=0; ayrıca 8 saat düşülmez.
+            if val in ["8", "5", "16", "19", "11", "24"]:
                 toplam_calisma += int(val)
 
             dt = datetime.date(yil, ay, d)
@@ -985,7 +984,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 min_b_saat = model.NewIntVar(0, 1000, f"min_saat_{b_adi}")
                 for p in b_personelleri:
                     bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
-                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)))
+                    k8_saat_toplam = sum(k8[(p, d)] * 8 for d in kultur_8s_gun_indeksleri) if p in kultur_nobetcileri else 0
+                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)) + k8_saat_toplam)
                     model.Add(bu_ay_saat <= max_b_saat)
                     model.Add(bu_ay_saat >= min_b_saat)
 
