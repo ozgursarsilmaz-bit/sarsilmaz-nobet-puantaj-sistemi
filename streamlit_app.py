@@ -1,5 +1,6 @@
 import base64
 import calendar
+import math
 import datetime
 from io import BytesIO
 import openpyxl
@@ -229,7 +230,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         "Genel Perşembe - Pazar Yasağı", value=True
     )
     cuma_haftasonu_siki_kural = st.sidebar.checkbox(
-        "📌 Cuma / Cmts / Pzr Dengeli Dağılım (Maks 1 Gün)", value=True
+        "📌 Cuma / Cmts / Pzr tekrarını azalt (esnek tercih)", value=True
+    )
+    cozum_arama_suresi = st.sidebar.number_input(
+        "Dağıtım aşaması başına arama süresi (saniye)", min_value=5, max_value=120, value=15,
+        help="En iyi denge kanıtlanamazsa süreyi artırabilirsiniz. Beş aşama sırayla çalışır.",
     )
     esnek_personel = st.sidebar.multiselect(
         "🔓 Özel Esneklik Tanınacak Personel(ler):",
@@ -896,6 +901,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
     # HESAPLAMA BUTONU
     if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
+        st.session_state.hesaplanan_sonuc = None
         hata_listesi = []
         pcr_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "PCR"]
         mikro_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "Mikro"]
@@ -906,14 +912,16 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 m_pcr = sum(1 for p in pcr_nobetcileri if d not in izinler[p])
                 m_mikro = sum(1 for p in mikro_nobetcileri if d not in izinler[p])
                 m_kultur = sum(1 for p in kultur_nobetcileri if d not in izinler[p])
-                if m_pcr < gunluk_nobetci or m_mikro < gunluk_nobetci or m_kultur < gunluk_nobetci:
-                    tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
-                    hata_listesi.append(f"⚠️ **{tarih_str}** ({d+1}. gün): İzinler nedeniyle en az bir birimde yeterli nöbetçi yok!")
+                for birim, personeller, musait in [("PCR", pcr_nobetcileri, m_pcr), ("Mikro", mikro_nobetcileri, m_mikro), ("Kültür", kultur_nobetcileri, m_kultur)]:
+                    if musait < gunluk_nobetci:
+                        tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
+                        engeller = ", ".join(p for p in personeller if d in izinler[p]) or "kadro yetersiz"
+                        hata_listesi.append(f"❌ {tarih_str} — {birim}: {gunluk_nobetci} kişi gerekli, {musait} kişi müsait. İzin/mazeret: {engeller}.")
             else:
                 musait_sayisi = sum(1 for p in nobetci_personeller if d not in izinler[p])
                 if musait_sayisi < gunluk_nobetci:
                     tarih_str = datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
-                    hata_listesi.append(f"⚠️ **{tarih_str}** ({d+1}. gün): En az {gunluk_nobetci} kişi gerekli ancak sadece {musait_sayisi} müsait.")
+                    hata_listesi.append(f"❌ {tarih_str} — {birim_secimi}: {gunluk_nobetci} kişi gerekli, {musait_sayisi} kişi müsait. İzin/mazeret: {', '.join(p for p in nobetci_personeller if d in izinler[p]) or 'kadro yetersiz'}.")
 
         for p in nobetci_personeller:
             ortak = set(izinler[p]).intersection(set(sabit_nobetler[p]))
@@ -926,6 +934,15 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         else:
             model = cp_model.CpModel()
             x, k8 = {}, {}
+            kisit_aciklamalari = {}
+            def tarih(d):
+                return datetime.date(yil, ay, d + 1).strftime("%d.%m.%Y")
+            def zorunlu_kisit(ifade, aciklama):
+                lit = model.NewBoolVar(f"kisit_{len(kisit_aciklamalari)}")
+                model.Add(ifade).OnlyEnforceIf(lit)
+                model.AddAssumption(lit)
+                kisit_aciklamalari[lit.Index()] = aciklama
+
 
             for p in nobetci_personeller:
                 for d in range(gun_sayisi): x[(p, d)] = model.NewBoolVar(f"x_{p}_{d}")
@@ -934,67 +951,67 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             if birim_secimi == "Tüm Laboratuvar (Birleşik)":
                 for d in range(gun_sayisi):
-                    model.Add(sum(x[(p, d)] for p in pcr_nobetcileri) == gunluk_nobetci)
-                    model.Add(sum(x[(p, d)] for p in mikro_nobetcileri) == gunluk_nobetci)
-                    model.Add(sum(x[(p, d)] for p in kultur_nobetcileri) == gunluk_nobetci)
+                    zorunlu_kisit(sum(x[(p, d)] for p in pcr_nobetcileri) == gunluk_nobetci, f"{tarih(d)} — PCR: {gunluk_nobetci} nöbetçi gerekli")
+                    zorunlu_kisit(sum(x[(p, d)] for p in mikro_nobetcileri) == gunluk_nobetci, f"{tarih(d)} — Mikro: {gunluk_nobetci} nöbetçi gerekli")
+                    zorunlu_kisit(sum(x[(p, d)] for p in kultur_nobetcileri) == gunluk_nobetci, f"{tarih(d)} — Kültür: {gunluk_nobetci} nöbetçi gerekli")
             else:
                 for d in range(gun_sayisi):
-                    model.Add(sum(x[(p, d)] for p in nobetci_personeller) == gunluk_nobetci)
+                    zorunlu_kisit(sum(x[(p, d)] for p in nobetci_personeller) == gunluk_nobetci, f"{tarih(d)} — {birim_secimi}: {gunluk_nobetci} nöbetçi gerekli")
 
             kultur_8s_gun_indeksleri = [d for d in range(gun_sayisi) if datetime.date(yil, ay, d + 1).weekday() == 5 or (d + 1) in kultur_8s_tatil_gunleri]
             for d in range(gun_sayisi):
                 if d in kultur_8s_gun_indeksleri and kultur_nobetcileri:
-                    model.Add(sum(k8[(p, d)] for p in kultur_nobetcileri) == 1)
+                    zorunlu_kisit(sum(k8[(p, d)] for p in kultur_nobetcileri) == 1, f"{tarih(d)} — Kültür 8s: 1 vardiyacı gerekli")
                 else:
-                    for p in kultur_nobetcileri: model.Add(k8[(p, d)] == 0)
+                    for p in kultur_nobetcileri: zorunlu_kisit(k8[(p, d)] == 0, f"{p} — {tarih(d)}: Kültür 8s vardiya günü değil")
 
             for p in kultur_nobetcileri:
                 for d in kultur_8s_gun_indeksleri:
                     ni_days = kultur_ni_gunleri(yil, ay, gun_sayisi, {d + 1}, resmi_tatil_gunleri)
                     for ni_day in ni_days:
-                        model.Add(k8[(p, d)] + x[(p, ni_day - 1)] <= 1)
-                        model.Add(k8[(p, d)] + k8[(p, ni_day - 1)] <= 1)
+                        zorunlu_kisit(k8[(p, d)] + x[(p, ni_day - 1)] <= 1, f"{p} — {tarih(d)} Kültür 8s sonrası {tarih(ni_day - 1)} Nİ: nöbet verilemez")
+                        zorunlu_kisit(k8[(p, d)] + k8[(p, ni_day - 1)] <= 1, f"{p} — {tarih(d)} Kültür 8s sonrası {tarih(ni_day - 1)} Nİ: vardiya verilemez")
 
             for p in nobetci_personeller:
                 for d in izinler[p]:
-                    model.Add(x[(p, d)] == 0)
-                    if p in kultur_nobetcileri: model.Add(k8[(p, d)] == 0)
+                    zorunlu_kisit(x[(p, d)] == 0, f"{p} — {tarih(d)}: izin/mazeret nedeniyle nöbet verilemez")
+                    if p in kultur_nobetcileri: zorunlu_kisit(k8[(p, d)] == 0, f"{p} — {tarih(d)}: izin/mazeret nedeniyle Kültür 8s verilemez")
 
             for p in nobetci_personeller:
-                for d in sabit_nobetler[p]: model.Add(x[(p, d)] == 1)
+                for d in sabit_nobetler[p]: zorunlu_kisit(x[(p, d)] == 1, f"{p} — {tarih(d)}: sabit nöbet")
 
             if ilk_mesai_gunu is not None:
                 for p in gecmis_ay_kultur_ni:
-                    model.Add(x[(p, ilk_mesai_gunu - 1)] == 0)
+                    zorunlu_kisit(x[(p, ilk_mesai_gunu - 1)] == 0, f"{p} — {tarih(ilk_mesai_gunu - 1)}: önceki aydan Kültür Nİ devri")
                     if p in kultur_nobetcileri:
-                        model.Add(k8[(p, ilk_mesai_gunu - 1)] == 0)
+                        zorunlu_kisit(k8[(p, ilk_mesai_gunu - 1)] == 0, f"{p} — {tarih(ilk_mesai_gunu - 1)}: Kültür Nİ devrinde vardiya verilemez")
 
             for p in gecmis_ay_son_gun_nobetcileri:
                 if p in nobetci_personeller:
-                    model.Add(x[(p, 0)] == 0)
-                    if p in kultur_nobetcileri: model.Add(k8[(p, 0)] == 0)
+                    zorunlu_kisit(x[(p, 0)] == 0, f"{p} — {tarih(0)}: önceki ay son gün nöbeti sonrası dinlenme")
+                    if p in kultur_nobetcileri: zorunlu_kisit(k8[(p, 0)] == 0, f"{p} — {tarih(0)}: önceki ay son gün nöbeti sonrası vardiya verilemez")
 
             for p in nobetci_personeller:
                 p_dinlenme = 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
                 for d in range(gun_sayisi):
                     if p in kultur_nobetcileri:
-                        model.Add(x[(p, d)] + k8[(p, d)] <= 1)
-                        if d > 0: model.Add(x[(p, d - 1)] + k8[(p, d)] <= 1)
-                        if d < gun_sayisi - 1: model.Add(k8[(p, d)] + x[(p, d + 1)] <= 1)
+                        zorunlu_kisit(x[(p, d)] + k8[(p, d)] <= 1, f"{p} — {tarih(d)}: nöbet ve Kültür 8s çakışamaz")
+                        if d > 0: zorunlu_kisit(x[(p, d - 1)] + k8[(p, d)] <= 1, f"{p} — {tarih(d - 1)} nöbeti sonrası {tarih(d)} Kültür 8s verilemez")
+                        if d < gun_sayisi - 1: zorunlu_kisit(k8[(p, d)] + x[(p, d + 1)] <= 1, f"{p} — {tarih(d)} Kültür 8s sonrası {tarih(d + 1)} nöbet verilemez")
 
                     for k in range(1, p_dinlenme + 1):
                         if d + k < gun_sayisi:
-                            model.Add(x[(p, d)] + x[(p, d + k)] <= 1)
+                            zorunlu_kisit(x[(p, d)] + x[(p, d + k)] <= 1, f"{p} — {tarih(d)} / {tarih(d + k)}: en az {p_dinlenme} tam gün dinlenme")
                             if p in kultur_nobetcileri:
-                                model.Add(x[(p, d)] + k8[(p, d + k)] <= 1)
-                                model.Add(k8[(p, d)] + x[(p, d + k)] <= 1)
+                                zorunlu_kisit(x[(p, d)] + k8[(p, d + k)] <= 1, f"{p} — {tarih(d)} nöbet / {tarih(d + k)} Kültür 8s: {p_dinlenme} gün dinlenme")
+                                zorunlu_kisit(k8[(p, d)] + x[(p, d + k)] <= 1, f"{p} — {tarih(d)} Kültür 8s / {tarih(d + k)} nöbet: {p_dinlenme} gün dinlenme")
 
             if persembe_pazar_yasagi:
                 for d in range(gun_sayisi - 3):
                     if datetime.date(yil, ay, d + 1).weekday() == 3:
                         for p in nobetci_personeller:
                             if p not in esnek_personel:
-                                model.Add(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1)
+                                zorunlu_kisit(x.get((p, d), 0) + x.get((p, d + 3), 0) <= 1, f"{p} — {tarih(d)} / {tarih(d + 3)}: Perşembe–Pazar yasağı")
 
             for rule in kisi_kisitlari:
                 p1, aralik = rule["ana"], rule["aralik"]
@@ -1003,7 +1020,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         for d2 in range(max(0, d1 - aralik), min(gun_sayisi, d1 + aralik + 1)):
                             p1_gorev = x[(p1, d1)] + (k8[(p1, d1)] if p1 in kultur_nobetcileri else 0)
                             p2_gorev = x[(p2, d2)] + (k8[(p2, d2)] if p2 in kultur_nobetcileri else 0)
-                            model.Add(p1_gorev + p2_gorev <= 1)
+                            zorunlu_kisit(p1_gorev + p2_gorev <= 1, f"{p1} ({tarih(d1)}) / {p2} ({tarih(d2)}): kişiler arası {aralik} gün mesafe/çakışma yasağı")
 
             def gun_kategorisi_indeksleri(w_list):
                 return [d for d in range(gun_sayisi) if datetime.date(yil, ay, d + 1).weekday() in w_list]
@@ -1012,80 +1029,132 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             cumartesi_indeksleri = gun_kategorisi_indeksleri([5])
             pazar_indeksleri = gun_kategorisi_indeksleri([6])
 
-            if cuma_haftasonu_siki_kural:
-                for p in nobetci_personeller:
-                    model.Add(sum(x[(p, d)] for d in cuma_indeksleri) <= 1)
-                    model.Add(sum(x[(p, d)] for d in cumartesi_indeksleri) <= 1)
-                    model.Add(sum(x[(p, d)] for d in pazar_indeksleri) <= 1)
-
-            kategoriler = {
-                "Pazartesi": ([0], 500), "Salı": ([1], 500), "Çarşamba": ([2], 500),
-                "Perşembe": ([3], 1000), "Cuma": ([4], 1500), "Cumartesi": ([5], 2500), "Pazar": ([6], 2000),
-            }
-
             birimler_listesi = ["PCR", "Mikro", "Kültür"] if birim_secimi == "Tüm Laboratuvar (Birleşik)" else [birim_secimi]
-            saat_farklari, kategori_farklari = [], []
+            saat_farklari, adet_farklari, kategori_farklari = [], [], []
+            gunluk_saatler = [sum(calculate_nobet_hakedis(yil, ay, d + 1, gun_sayisi,
+                              resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in range(gun_sayisi)]
+            def fark_hedefi(degerler, alt, ust, ad):
+                en_az = model.NewIntVar(alt, ust, f"min_{ad}")
+                en_cok = model.NewIntVar(alt, ust, f"max_{ad}")
+                model.AddMinEquality(en_az, degerler)
+                model.AddMaxEquality(en_cok, degerler)
+                return en_cok - en_az
 
-            for b_adi in birimler_listesi:
-                b_personelleri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == b_adi or birim_secimi != "Tüm Laboratuvar (Birleşik)"]
-                if not b_personelleri: continue
+            for birim in birimler_listesi:
+                personeller = [p for p in nobetci_personeller
+                               if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == birim
+                               or birim_secimi != "Tüm Laboratuvar (Birleşik)"]
+                if not personeller: continue
+                saatler, adetler = [], []
+                for p in personeller:
+                    saat = model.NewIntVar(0, sum(gunluk_saatler), f"hakedis_{p}")
+                    adet = model.NewIntVar(0, gun_sayisi, f"adet_{p}")
+                    model.Add(saat == sum(x[(p, d)] * gunluk_saatler[d] for d in range(gun_sayisi)))
+                    model.Add(adet == sum(x[(p, d)] for d in range(gun_sayisi)))
+                    saatler.append(saat)
+                    adetler.append(adet)
+                saat_farki = fark_hedefi(saatler, 0, sum(gunluk_saatler), birim + "_saat")
+                adet_farki = fark_hedefi(adetler, 0, gun_sayisi, birim + "_adet")
+                # Günlük ihtiyaç sabit: toplamın kişi sayısına bölünmesinden
+                # gelen zorunlu alt sınırlar aramayı hızlandırır.
+                saat_adimi = math.gcd(*gunluk_saatler)
+                if (sum(gunluk_saatler) * gunluk_nobetci // saat_adimi) % len(personeller):
+                    model.Add(saat_farki >= saat_adimi)
+                if (gun_sayisi * gunluk_nobetci) % len(personeller):
+                    model.Add(adet_farki >= 1)
+                saat_farklari.append(saat_farki)
+                adet_farklari.append(adet_farki)
+                for weekday in range(7):
+                    gun_adi = tr_gunler[weekday]
+                    indices = gun_kategorisi_indeksleri([weekday])
+                    devirler = [int(get_prev(p, gun_adi)) for p in personeller]
+                    alt, ust = min(devirler), max(devirler) + len(indices)
+                    degerler = []
+                    for p, devir in zip(personeller, devirler):
+                        v = model.NewIntVar(alt, ust, f"gun_{p}_{weekday}")
+                        model.Add(v == devir + sum(x[(p, d)] for d in indices))
+                        degerler.append(v)
+                    kategori_farklari.append(fark_hedefi(degerler, alt, ust, birim + gun_adi))
 
-                max_b_saat = model.NewIntVar(0, 1000, f"max_saat_{b_adi}")
-                min_b_saat = model.NewIntVar(0, 1000, f"min_saat_{b_adi}")
-                for p in b_personelleri:
-                    bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
-                    k8_saat_toplam = sum(k8[(p, d)] * 8 for d in kultur_8s_gun_indeksleri) if p in kultur_nobetcileri else 0
-                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)) + k8_saat_toplam)
-                    model.Add(bu_ay_saat <= max_b_saat)
-                    model.Add(bu_ay_saat >= min_b_saat)
-
-                b_saat_farki = model.NewIntVar(0, 1000, f"saat_farki_{b_adi}")
-                model.Add(b_saat_farki == max_b_saat - min_b_saat)
-                saat_farklari.append(b_saat_farki)
-
-                for kat_adi, (w_list, agirlik) in kategoriler.items():
-                    day_indices = gun_kategorisi_indeksleri(w_list)
-                    max_kat = model.NewIntVar(0, 100, f"max_{b_adi}_{kat_adi}")
-                    min_kat = model.NewIntVar(0, 100, f"min_{b_adi}_{kat_adi}")
-                    for p in b_personelleri:
-                        bu_ay_kat_sayisi = sum(x[(p, d)] for d in day_indices)
-                        kumulatif_kat_sayisi = get_prev(p, kat_adi) + bu_ay_kat_sayisi
-                        model.Add(kumulatif_kat_sayisi <= max_kat)
-                        model.Add(kumulatif_kat_sayisi >= min_kat)
-                    fark = model.NewIntVar(0, 100, f"fark_{b_adi}_{kat_adi}")
-                    model.Add(fark == max_kat - min_kat)
-                    kategori_farklari.append(agirlik * fark)
-
-            kultur8_farklari = []
-            if kultur_nobetcileri and kultur_8s_gun_indeksleri:
-                max_k8, min_k8 = model.NewIntVar(0, 50, "max_k8"), model.NewIntVar(0, 50, "min_k8")
-                for p in kultur_nobetcileri:
-                    bu_ay_k8 = sum(k8[(p, d)] for d in kultur_8s_gun_indeksleri)
-                    kumulatif_k8 = get_prev_kultur8(p) + bu_ay_k8
-                    model.Add(kumulatif_k8 <= max_k8)
-                    model.Add(kumulatif_k8 >= min_k8)
-                diff_k8 = model.NewIntVar(0, 50, "diff_k8")
-                model.Add(diff_k8 == max_k8 - min_k8)
-                kultur8_farklari.append(diff_k8)
-
-            yigilma_farklari = []
-            yariyil = gun_sayisi // 2
+            # 2 hafta sonu ve tekrarlar tercih; hiçbiri çözümü engellemez.
+            hafta_gruplari, haftasonu_gruplari = {}, {}
+            for d in range(gun_sayisi):
+                dt = datetime.date(yil, ay, d + 1)
+                hafta = dt - datetime.timedelta(days=dt.weekday())
+                hafta_gruplari.setdefault(hafta, []).append(d)
+                if dt.weekday() >= 4:
+                    haftasonu_gruplari.setdefault(hafta, []).append(d)
+            yayilim_cezalari = []
             for p in nobetci_personeller:
-                n1 = sum(x[(p, d)] for d in range(0, yariyil))
-                n2 = sum(x[(p, d)] for d in range(yariyil, gun_sayisi))
-                diff = model.NewIntVar(0, 31, f"y_diff_{p}")
-                model.AddAbsEquality(diff, n1 - n2)
-                yigilma_farklari.append(diff)
+                for hafta, indices in hafta_gruplari.items():
+                    fazla = model.NewIntVar(0, gun_sayisi, f"hafta_tekrar_{p}_{hafta}")
+                    model.AddMaxEquality(fazla, [0, sum(x[(p, d)] for d in indices) - 1])
+                    yayilim_cezalari.append(fazla)
+                weekend_vars = []
+                for hafta, indices in haftasonu_gruplari.items():
+                    var = model.NewBoolVar(f"haftasonu_{p}_{hafta}")
+                    model.AddMaxEquality(var, [x[(p, d)] for d in indices])
+                    weekend_vars.append(var)
+                fazla = model.NewIntVar(0, len(weekend_vars), f"haftasonu_fazla_{p}")
+                model.AddMaxEquality(fazla, [0, sum(weekend_vars) - 2])
+                yayilim_cezalari.append(fazla)
+                if cuma_haftasonu_siki_kural:
+                    for weekday in [4, 5, 6]:
+                        indices = gun_kategorisi_indeksleri([weekday])
+                        tekrar = model.NewIntVar(0, gun_sayisi, f"tur_tekrar_{p}_{weekday}")
+                        model.AddMaxEquality(tekrar, [0, sum(x[(p, d)] for d in indices) - 1])
+                        yayilim_cezalari.append(tekrar)
 
-            model.Minimize(
-                10000000 * sum(saat_farklari) + 50000 * sum(kultur8_farklari) + sum(kategori_farklari) + 100 * sum(yigilma_farklari)
-            )
+            kultur_hedefleri = []
+            if kultur_nobetcileri:
+                devirler = [int(get_prev_kultur8(p)) for p in kultur_nobetcileri]
+                alt, ust = min(devirler), max(devirler) + len(kultur_8s_gun_indeksleri)
+                degerler = []
+                for p, devir in zip(kultur_nobetcileri, devirler):
+                    var = model.NewIntVar(alt, ust, f"kultur_adet_{p}")
+                    model.Add(var == devir + sum(k8[(p, d)] for d in kultur_8s_gun_indeksleri))
+                    degerler.append(var)
+                kultur_hedefleri.append(fark_hedefi(degerler, alt, ust, "kultur8"))
 
-            solver = cp_model.CpSolver()
-            solver.parameters.num_search_workers = 2
-            solver.parameters.max_time_in_seconds = 4.0
-            status = solver.Solve(model)
-
+            hedefler = [
+                ("T.NöbetSaati dengesi", sum(saat_farklari)),
+                ("Nöbet adedi dengesi", sum(adet_farklari)),
+                ("Gün türü devir dengesi", sum(kategori_farklari)),
+                ("Haftalara yayılım", sum(yayilim_cezalari)),
+                ("Kültür 8s adet dengesi", sum(kultur_hedefleri)),
+            ]
+            solver = None
+            status = cp_model.UNKNOWN
+            optimizasyon_ozeti = []
+            ilerleme = st.empty()
+            for asama, (ad, hedef) in enumerate(hedefler, 1):
+                ilerleme.info(f"Dağıtım kontrolü {asama}/5: {ad}")
+                model.Minimize(hedef)
+                aday = cp_model.CpSolver()
+                aday.parameters.num_search_workers = 1
+                aday.parameters.max_time_in_seconds = float(cozum_arama_suresi)
+                aday_status = aday.Solve(model)
+                if aday_status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                    if solver is None:
+                        solver, status = aday, aday_status
+                    else:
+                        st.warning(f"{ad} için arama süresi içinde yeni sonuç alınamadı; önceki geçerli liste korundu.")
+                    break
+                solver, status = aday, aday_status
+                deger = int(solver.Value(hedef))
+                optimizasyon_ozeti.append({"Öncelik": asama, "Hedef": ad,
+                    "Fark / ceza": deger, "En iyi sonuç kanıtlandı": status == cp_model.OPTIMAL})
+                if status != cp_model.OPTIMAL:
+                    if asama == 1:
+                        st.warning(f"{ad}: geçerli liste bulundu, ancak süre içinde en küçük fark kanıtlanamadı. Saat önceliği nedeniyle alt hedeflere geçilmedi; arama süresini artırabilirsiniz.")
+                        break
+                    st.warning(f"{ad}: en küçük fark süre içinde kanıtlanamadı. Bulunan değer korunarak sonraki öncelik değerlendirilecek.")
+                # Önceki hedefin elde edilmiş değeri değiştirilemez.
+                model.Add(hedef == deger)
+                model.ClearHints()
+                for var in list(x.values()) + list(k8.values()):
+                    model.AddHint(var, solver.Value(var))
+            ilerleme.empty()
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 nobet_dict = {p: set() for p in nobetci_personeller}
                 kultur_8s_dict = {p: set() for p in nobetci_personeller}
@@ -1235,6 +1304,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 )
 
                 st.session_state.hesaplanan_sonuc = {
+                    "optimizasyon_ozeti": optimizasyon_ozeti,
                     "df_liste": df_liste, "df_istatistik": df_istatistik,
                     "df_puantaj": df_puantaj, "excel_bytes": excel_bytes,
                     "birim_secimi": birim_secimi, "yil": yil, "ay": ay,
@@ -1243,11 +1313,43 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 st.success("✨ Nöbet çizelgesi ve Puantaj tablosu başarıyla oluşturuldu!")
 
             else:
-                st.error("❌ Çözüm bulunamadı! Girilen kısıtlar, izinler veya sabit nöbetler çakışıyor olabilir.")
+                if status == cp_model.INFEASIBLE:
+                    st.error("❌ Zorunlu kısıtlar birlikte uygulanınca çözüm yok. Esnek dağıtım tercihleri bunun nedeni değildir.")
+                    tanilama_modeli = model.Clone()
+                    tanilama_modeli.ClearObjective()
+                    tanilama_modeli.ClearHints()
+                    tani_solver = cp_model.CpSolver()
+                    tani_solver.parameters.num_search_workers = 1
+                    tani_solver.parameters.max_time_in_seconds = 3.0
+                    tani_status = tani_solver.Solve(tanilama_modeli)
+                    core = list(tani_solver.SufficientAssumptionsForInfeasibility()) if tani_status == cp_model.INFEASIBLE else list(solver.SufficientAssumptionsForInfeasibility())
+                    # En fazla 20 kısa deneme; minimal küme olduğu iddia edilmez.
+                    for lit in core[:20]:
+                        aday_core = [i for i in core if i != lit]
+                        tanilama_modeli.ClearAssumptions()
+                        tanilama_modeli.AddAssumptions([tanilama_modeli.GetBoolVarFromProtoIndex(i) for i in aday_core])
+                        tani_solver.parameters.max_time_in_seconds = 0.2
+                        if tani_solver.Solve(tanilama_modeli) == cp_model.INFEASIBLE:
+                            core = aday_core
+                    mesajlar = list(dict.fromkeys(kisit_aciklamalari.get(i, f"Kısıt {i}") for i in core))
+                    if mesajlar:
+                        st.write("Birlikte çözümü engelleyen kısıt kümesi (tek tek hepsinin kaldırılması gerekmez):")
+                        for mesaj in mesajlar:
+                            st.error(mesaj)
+                    else:
+                        st.error("Kısıt çakışması doğrulandı; çözücü kişi/tarih içeren bir kısıt kümesi döndürmedi.")
+                elif status == cp_model.MODEL_INVALID:
+                    st.error("❌ Dağıtım modeli geçersiz: " + model.Validate())
+                else:
+                    st.warning("⏱️ Arama süresi içinde geçerli liste bulunamadı. Bu, kuralların çeliştiğinin kanıtı değildir. Süreyi artırarak tekrar deneyin.")
 
     # SONUÇLARI EKRANDA GÖSTER
     if st.session_state.hesaplanan_sonuc is not None:
         sonuc = st.session_state.hesaplanan_sonuc
+        if sonuc.get("optimizasyon_ozeti"):
+            with st.expander("Dağıtım öncelikleri ve kontrol sonuçları"):
+                st.caption("İlk üç hedefteki değerler birim içi farkların toplamıdır. Son iki hedefte tekrar/yayılım cezası ve Kültür adet farkı gösterilir. En iyi sonuç kanıtlanmadıysa arama süresini artırabilirsiniz.")
+                st.dataframe(pd.DataFrame(sonuc["optimizasyon_ozeti"]), use_container_width=True)
         b64 = base64.b64encode(sonuc["excel_bytes"].getvalue()).decode()
         file_name = f"Nobet_ve_Puantaj_Listesi_{sonuc['birim_secimi']}_{sonuc['yil']}_{sonuc['ay']}.xlsx"
         href_link = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{file_name}" class="direct-download-btn">📥 3 Sekmeli Resmi Excel Dosyasını İndir (.xlsx)</a>'
