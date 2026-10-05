@@ -446,7 +446,34 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else: toplam_saat += 8
         return toplam_saat
 
-    def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
+    def calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+        dt = datetime.date(yil, ay, day)
+        next_dt = dt + datetime.timedelta(days=1)
+        next_off = next_dt.weekday() >= 5 or (
+            next_dt.month == ay and next_dt.day in resmi_tatil_gunleri)
+        if day == 5 and day in yarim_gun_tatil_gunleri:
+            return 8, 3
+        if day in yarim_gun_tatil_gunleri:
+            return 12, 7
+        if day == gun_sayisi and not next_off:
+            return 12, 4
+        if is_day_off(yil, ay, day, resmi_tatil_gunleri):
+            return (12, 12) if next_off else (12, 4)
+        if dt.weekday() < 4:
+            return 8, 0
+        return 12, 4
+
+    def kultur_ni_gunleri(yil, ay, gun_sayisi, vardiyalar, resmi_tatil_gunleri):
+        ni_gunleri = set()
+        for vardiya in vardiyalar:
+            for day in range(vardiya + 1, gun_sayisi + 1):
+                if not is_day_off(yil, ay, day, resmi_tatil_gunleri):
+                    ni_gunleri.add(day)
+                    break
+        return ni_gunleri
+
+    def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, kultur_8s_vardiyalari=None):
+        kultur_8s_vardiyalari = set(kultur_8s_vardiyalari or ())
         aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
         toplam_calisma = 0
@@ -459,8 +486,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         for d in range(1, gun_sayisi + 1):
             val = str(p_row_dict.get(str(d), "")).strip()
 
-            # Sütun 1: Sadece çalışan ham saatlerin toplamı (Nİ düşümü YAPILMAZ)
-            if val in ["8", "5", "16", "19", "11", "24"]:
+            # Kültür 8s yalnızca hücrede gösterilir; saat toplamlarına girmez.
+            # Nİ için ayrıca saat düşümü yapılmaz.
+            if d not in kultur_8s_vardiyalari and val in ["8", "5", "16", "19", "11", "24"]:
                 toplam_calisma += int(val)
 
             dt = datetime.date(yil, ay, d)
@@ -470,26 +498,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             is_risk = d in acil_days_set
 
             if val == "24":
-                # Nöbet türüne göre Gece / Normal kırılımı
-                if d == 5 and d in yarim_gun_tatil_gunleri: # Örn: 5 Ekim Arife Öncesi
-                    g_saat, n_saat = 8, 3
-                elif d in yarim_gun_tatil_gunleri: # Örn: 6 Ekim Arife
-                    g_saat, n_saat = 12, 7
-                elif d == gun_sayisi and not is_next_day_off: # Ayın son günü ertesi hafta içi
-                    g_saat, n_saat = 12, 4
-                elif is_off:
-                    if is_next_day_off: # Resmi tatil ertesi de tatil (7 Ekim)
-                        g_saat, n_saat = 12, 12
-                    else: # Resmi tatil ertesi mesai (8 Ekim)
-                        g_saat, n_saat = 12, 4
-                elif weekday in [0, 1, 2, 3]: # Pzt, Salı, Çarş, Per
-                    g_saat, n_saat = 8, 0
-                elif weekday in [4, 6]: # Cuma ve Pazar
-                    g_saat, n_saat = 12, 4
-                elif weekday == 5: # Cumartesi
-                    g_saat, n_saat = 12, 12
-                else:
-                    g_saat, n_saat = 12, 4
+                g_saat, n_saat = calculate_nobet_hakedis(
+                    yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
                 if is_risk:
                     risk_gece += g_saat
@@ -497,10 +507,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else:
                     norm_gece += g_saat
                     norm_normal += n_saat
-
-            elif val == "8" and d in kultur_8s_tatil_gunleri:
-                # Resmi tatillerde tutulan manuel Kültür 8s vardiyası
-                norm_normal += 8
 
         # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
         is_devir_normal = p_name in gecmis_ay_son_gun_normal
@@ -764,6 +770,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             p_shifts = nobet_dict.get(p, set())
             p_k8_shifts = kultur_8s_dict.get(p, set())
+            p_k8_ni = kultur_ni_gunleri(yil, ay, gun_sayisi, p_k8_shifts, resmi_tatil_gunleri)
             p_acils = acil_nobet_dict.get(p, set())
             p_row_dict = {}
 
@@ -789,9 +796,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     elif (day - 1) in p_shifts:
                         cell.value = "T" if day in off_days else "Nİ"
                         if cell.value == "Nİ": cell.font = font_ni
-                    elif dt.weekday() == 0 and (d - 2) in p_k8_shifts and datetime.date(yil, ay, d - 2).weekday() == 5:
+                    elif day in p_k8_ni:
                         cell.value, cell.font = "Nİ", font_ni
-                    elif (day - 1) in p_k8_shifts and datetime.date(yil, ay, d - 1).weekday() == 5: cell.value = "T"
                     else:
                         if day in off_days: cell.value = "T"
                         elif day in yarim_gun_tatil_gunleri: cell.value, cell.font = 5, font_body
@@ -799,7 +805,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
                 p_row_dict[str(day)] = str(cell.value)
 
-            m = calculate_personel_puantaj_metrikleri(p, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil)
+            m = calculate_personel_puantaj_metrikleri(p, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, p_k8_shifts)
             metrik_values = [
                 int(m["Toplam Çalışma Saati"]), int(m["Aylık Çalışma Saati"]), int(m["Fazla Nöbet Saati"]),
                 int(m["Normal_Gece"]), int(m["Normal_Normal"]), int(m["Riskli_Gece"]), int(m["Riskli_Normal"]),
@@ -822,7 +828,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
         for day in range(1, gun_sayisi + 1):
             col_idx = day + 2
-            cell = ws3.cell(row=summary_r, column=col_idx, value="")
+            cell = ws3.cell(row=summary_r, column=col_idx, value=sum(calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)))
             cell.font, cell.alignment, cell.border, cell.fill = font_bold, align_center, border_cell, fill_green_bg
 
         for m_idx in range(len(ek_basliklar)):
@@ -899,6 +905,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else:
                     for p in kultur_nobetcileri: model.Add(k8[(p, d)] == 0)
 
+            for p in kultur_nobetcileri:
+                for d in kultur_8s_gun_indeksleri:
+                    ni_days = kultur_ni_gunleri(yil, ay, gun_sayisi, {d + 1}, resmi_tatil_gunleri)
+                    for ni_day in ni_days:
+                        model.Add(k8[(p, d)] + x[(p, ni_day - 1)] <= 1)
+                        model.Add(k8[(p, d)] + k8[(p, ni_day - 1)] <= 1)
+
             for p in nobetci_personeller:
                 for d in izinler[p]:
                     model.Add(x[(p, d)] == 0)
@@ -972,8 +985,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 min_b_saat = model.NewIntVar(0, 1000, f"min_saat_{b_adi}")
                 for p in b_personelleri:
                     bu_ay_saat = model.NewIntVar(0, 1000, f"saat_{p}")
-                    k8_saat_toplam = sum(k8[(p, d)] * 8 for d in kultur_8s_gun_indeksleri) if p in kultur_nobetcileri else 0
-                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)) + k8_saat_toplam)
+                    model.Add(bu_ay_saat == sum(x[(p, d)] * 24 for d in range(gun_sayisi)))
                     model.Add(bu_ay_saat <= max_b_saat)
                     model.Add(bu_ay_saat >= min_b_saat)
 
@@ -1131,6 +1143,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     p_row = {"Adı Soyadı": p, "Birim": p_birim}
                     p_shifts = nobet_dict.get(p, set())
                     p_k8_shifts = kultur_8s_dict.get(p, set())
+                    p_k8_ni = kultur_ni_gunleri(yil, ay, gun_sayisi, p_k8_shifts, resmi_tatil_gunleri)
 
                     for d in range(1, gun_sayisi + 1):
                         day_is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
@@ -1145,14 +1158,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                             elif d in p_shifts: p_row[str(d)] = "24"
                             elif d in p_k8_shifts: p_row[str(d)] = "8"
                             elif (d - 1) in p_shifts: p_row[str(d)] = "T" if day_is_off else "Nİ"
-                            elif dt.weekday() == 0 and (d - 2) in p_k8_shifts and datetime.date(yil, ay, d - 2).weekday() == 5: p_row[str(d)] = "Nİ"
-                            elif (d - 1) in p_k8_shifts and datetime.date(yil, ay, d - 1).weekday() == 5: p_row[str(d)] = "T"
+                            elif d in p_k8_ni: p_row[str(d)] = "Nİ"
                             else:
                                 if day_is_off: p_row[str(d)] = "T"
                                 elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
                                 else: p_row[str(d)] = "8"
 
-                    m = calculate_personel_puantaj_metrikleri(p, p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_nobet_dict.get(p, set()), kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil)
+                    m = calculate_personel_puantaj_metrikleri(p, p_row, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_nobet_dict.get(p, set()), kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, p_k8_shifts)
                     p_row["Toplam çalışma saati"] = m["Toplam Çalışma Saati"]
                     p_row["Aylık Çalışma Saati"] = m["Aylık Çalışma Saati"]
                     p_row["Fazla nöbet saati"] = m["Fazla Nöbet Saati"]
