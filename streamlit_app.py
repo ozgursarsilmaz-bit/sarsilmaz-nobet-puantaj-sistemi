@@ -1236,7 +1236,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                             elif d in p_shifts: p_row[str(d)] = "24"
                             elif d in p_k8_shifts: p_row[str(d)] = "8"
                             elif (d - 1) in p_shifts: p_row[str(d)] = "T" if day_is_off else "Nİ"
-                            elif dt.weekday() == 0 and (day - 2) in p_k8_shifts and datetime.date(yil, ay, day - 2).weekday() == 5: p_row[str(d)] = "Nİ"
+                            elif d >= 3 and dt.weekday() == 0 and (d - 2) in p_k8_shifts and datetime.date(yil, ay, d - 2).weekday() == 5: p_row[str(d)] = "Nİ"
                             elif (d - 1) in p_k8_shifts and datetime.date(yil, ay, d - 1).weekday() == 5: p_row[str(d)] = "T"
                             else:
                                 if day_is_off: p_row[str(d)] = "T"
