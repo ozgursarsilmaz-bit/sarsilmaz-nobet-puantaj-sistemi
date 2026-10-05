@@ -250,6 +250,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     gecmis_kultur8_istatistik = {}
     otomatik_son_gun_normal = []
     otomatik_son_gun_acil = []
+    otomatik_kultur_ni = []
 
     if uploaded_file is not None:
         try:
@@ -307,6 +308,17 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                                     else:
                                         otomatik_son_gun_normal.append(clean_n)
 
+            if "Kültür Nİ Devir" in xls.sheet_names:
+                df_kultur_devir = pd.read_excel(xls, sheet_name="Kültür Nİ Devir")
+                if "Personel" in df_kultur_devir.columns:
+                    otomatik_kultur_ni = [str(p).strip().upper() for p in df_kultur_devir["Personel"].dropna()
+                                         if str(p).strip().upper() in nobetci_personeller]
+            elif "Aylık Görev Listesi" in xls.sheet_names and not df_goreg.empty:
+                # Eski dosyalarda son gün Kültür 8s vardiyasını aktar.
+                if "Kültür (8s Vardiya)" in df_goreg.columns and pd.notna(last_row["Kültür (8s Vardiya)"]):
+                    otomatik_kultur_ni = [p.strip().upper() for p in str(last_row["Kültür (8s Vardiya)"]).split(",")
+                                         if p.strip().upper() in nobetci_personeller]
+
             st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
         except Exception as e:
             st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
@@ -324,6 +336,14 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         default=list(set(otomatik_son_gun_acil)),
         help="Önceki ayın son günü acil nöbet tutan personeller.",
     )
+
+    gecmis_ay_kultur_ni = st.sidebar.multiselect(
+        "🧫 Önceki Aydan Kültür 8s Nİ Devri:",
+        options=nobetci_personeller, default=list(set(otomatik_kultur_ni)),
+        help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk mesai gününe kalan personeller.",
+    )
+    ilk_mesai_gunu = next((d for d in range(1, gun_sayisi + 1)
+                          if datetime.date(yil, ay, d).weekday() < 5 and d not in resmi_tatil_gunleri), None)
 
     gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
 
@@ -508,6 +528,19 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else:
                     norm_gece += g_saat
                     norm_normal += n_saat
+
+        # Kültür 8s karşılığı Nİ sonraki aya kalıyorsa, bu 8s mevcut
+        # ayın ödeme hesabına girmez. Günlük hücrede 8 olarak kalır.
+        for vardiya in set(kultur_8s_vardiyalari or ()):
+            if str(p_row_dict.get(str(vardiya), "")).strip() == "8" and not kultur_ni_gunleri(
+                    yil, ay, gun_sayisi, {vardiya}, resmi_tatil_gunleri):
+                toplam_calisma -= 8
+
+        # Önceki ayın ödeme hesabından ayrılan Kültür 8s, bu ay Nİ
+        # kullanıldığında mesai karşılığı olarak eklenir; nöbet ücreti değildir.
+        if p_name in gecmis_ay_kultur_ni and ilk_mesai_gunu is not None:
+            if str(p_row_dict.get(str(ilk_mesai_gunu), "")).strip() == "Nİ":
+                toplam_calisma += 8
 
         # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
         is_devir_normal = p_name in gecmis_ay_son_gun_normal
@@ -787,7 +820,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     elif day in yarim_gun_tatil_gunleri: cell.value, cell.font = 5, font_body
                     else: cell.value, cell.font = 8, font_body
                 else:
-                    if day == 1 and p in gecmis_ay_son_gun_nobetcileri:
+                    if p in gecmis_ay_kultur_ni and day == ilk_mesai_gunu:
+                        cell.value, cell.font = "Nİ", font_ni
+                    elif day == 1 and p in gecmis_ay_son_gun_nobetcileri:
                         cell.value = "T" if day in off_days else "Nİ"
                         if cell.value == "Nİ": cell.font = font_ni
                     elif day in p_shifts:
@@ -846,6 +881,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         for m_idx in range(len(ek_basliklar)):
             col_letter = get_column_letter(start_col + m_idx)
             ws3.column_dimensions[col_letter].width = 6.5
+
+        ws_devir = wb.create_sheet("Kültür Nİ Devir")
+        ws_devir.append(["Personel"])
+        for p, vardiyalar in kultur_8s_dict.items():
+            if any(not kultur_ni_gunleri(yil, ay, gun_sayisi, {d}, resmi_tatil_gunleri) for d in vardiyalar):
+                ws_devir.append([p])
+        ws_devir.sheet_state = "hidden"
 
         output = BytesIO()
         wb.save(output)
@@ -920,6 +962,12 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             for p in nobetci_personeller:
                 for d in sabit_nobetler[p]: model.Add(x[(p, d)] == 1)
+
+            if ilk_mesai_gunu is not None:
+                for p in gecmis_ay_kultur_ni:
+                    model.Add(x[(p, ilk_mesai_gunu - 1)] == 0)
+                    if p in kultur_nobetcileri:
+                        model.Add(k8[(p, ilk_mesai_gunu - 1)] == 0)
 
             for p in gecmis_ay_son_gun_nobetcileri:
                 if p in nobetci_personeller:
@@ -1156,7 +1204,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                             elif d in yarim_gun_tatil_gunleri: p_row[str(d)] = "5"
                             else: p_row[str(d)] = "8"
                         else:
-                            if d == 1 and p in gecmis_ay_son_gun_nobetcileri: p_row[str(d)] = "T" if day_is_off else "Nİ"
+                            if p in gecmis_ay_kultur_ni and d == ilk_mesai_gunu: p_row[str(d)] = "Nİ"
+                            elif d == 1 and p in gecmis_ay_son_gun_nobetcileri: p_row[str(d)] = "T" if day_is_off else "Nİ"
                             elif d in p_shifts: p_row[str(d)] = "24"
                             elif d in p_k8_shifts: p_row[str(d)] = "8"
                             elif (d - 1) in p_shifts: p_row[str(d)] = "T" if day_is_off else "Nİ"
