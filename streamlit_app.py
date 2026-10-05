@@ -718,7 +718,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             bu_ay_gunler = {g: 0 for g in gunler_listesi}
             bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
-            bu_ay_saat = bu_ay_toplam_nobet * 24
+            bu_ay_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in nobet_dict.get(p, set()))
             for d in nobet_dict.get(p, set()):
                 w = datetime.date(yil, ay, d).weekday()
                 bu_ay_gunler[tr_gunler[w]] += 1
@@ -739,7 +739,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             cell_nobet.font, cell_nobet.alignment, cell_nobet.border = font_bold, align_center, border_cell
             c_i += 1
 
-            bu_ay_acil_saat = len(acil_nobet_dict.get(p, set())) * 24
+            bu_ay_acil_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in acil_nobet_dict.get(p, set()))
             acil_devir = int(get_prev_acil(p))
             for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_devir + bu_ay_acil_saat]):
                 cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
@@ -1154,7 +1154,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
                     bu_ay_gunler = {g: 0 for g in gunler_listesi}
                     bu_ay_toplam_nobet = len(nobet_dict[p])
-                    bu_ay_saat = bu_ay_toplam_nobet * 24
+                    bu_ay_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in nobet_dict.get(p, set()))
                     for d in nobet_dict[p]:
                         w = datetime.date(yil, ay, d).weekday()
                         bu_ay_gunler[tr_gunler[w]] += 1
@@ -1170,7 +1170,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     row_dict[("T.NöbetSaati", "")] = bu_ay_saat
                     row_dict[("TOPLAM NÖBET", "")] = bu_ay_toplam_nobet
 
-                    bu_ay_acil_saat_val = len(acil_nobet_dict[p]) * 24
+                    bu_ay_acil_saat_val = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in acil_nobet_dict.get(p, set()))
                     acil_devir = get_prev_acil(p)
                     row_dict[("ACİL NÖBET (SAAT)", "Devir")] = acil_devir
                     row_dict[("ACİL NÖBET (SAAT)", "Bu Ay")] = bu_ay_acil_saat_val
