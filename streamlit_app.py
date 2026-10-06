@@ -1420,11 +1420,17 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             with st.expander("Ortak havuz acil dağıtımı kontrol sonuçları"):
                 st.caption("Önce farklı personele görev ve düşük devir önceliği; ardından aylık ve birikimli hakediş saat dengesi. Normal nöbet çizelgesi değiştirilmez.")
                 st.dataframe(pd.DataFrame(sonuc["acil_dagitim_ozeti"]), use_container_width=True)
-        b64 = base64.b64encode(sonuc["excel_bytes"].getvalue()).decode()
         file_name = f"Nobet_ve_Puantaj_Listesi_{sonuc['birim_secimi']}_{sonuc['yil']}_{sonuc['ay']}.xlsx"
-        href_link = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{file_name}" class="direct-download-btn">📥 3 Sekmeli Resmi Excel Dosyasını İndir (.xlsx)</a>'
+        st.download_button(
+            "📥 Excel İndir",
+            data=sonuc["excel_bytes"].getvalue(),
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="personel_excel_dogrudan_indir",
+            on_click="ignore",
+        )
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📅 Aylık Çizelge", "📊 İstatistik & Mesai", "📋 Puantaj Matrisi", "📥 Excel İndir"])
+        tab1, tab2, tab3 = st.tabs(["📅 Aylık Çizelge", "📊 İstatistik & Mesai", "📋 Puantaj Matrisi"])
         with tab1:
             st.subheader("🗓️ Birim Bazlı Aylık Görev Listesi (PCR | Mikro | Kültür)")
             st.dataframe(sonuc["df_liste"], use_container_width=True, height=450)
@@ -1434,10 +1440,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         with tab3:
             st.subheader("📋 Resmi Puantaj Tablosu Önizleme (Sarı Hücreler = Acil Nöbet)")
             st.dataframe(sonuc["df_puantaj"], use_container_width=True)
-        with tab4:
-            st.subheader("📥 Excel Dosyasını İndir")
-            st.write("Aşağıdaki butona tıkladığınızda dosyanız doğrudan bilgisayarınıza indirilecektir:")
-            st.markdown(href_link, unsafe_allow_html=True)
 
 
 # ==========================================
