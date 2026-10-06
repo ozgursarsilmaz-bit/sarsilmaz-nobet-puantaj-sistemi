@@ -146,7 +146,24 @@ st.markdown(
     [data-testid="stMainBlockContainer"], [data-testid="stAppViewContainer"] .main > div, [data-testid="stAppViewContainer"] .main .block-container { padding-top: 0.25rem !important; }
     [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
     section.main { padding-top: 0 !important; }
-    [data-testid="stHeader"], .stAppHeader { display: none !important; }
+    /* Üst çubuğu gizlemek, menü kapandığında açma okunu da gizler. */
+    [data-testid="stHeader"], .stAppHeader {
+        display: flex !important;
+        background: transparent !important;
+        pointer-events: none;
+    }
+    [data-testid="stHeader"] button, .stAppHeader button {
+        pointer-events: auto;
+    }
+    [data-testid="stSidebarCollapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        position: fixed;
+        top: 0.5rem;
+        left: 0.5rem;
+        z-index: 100001;
+        pointer-events: auto;
+    }
     .main { background-color: #F8F9FA; }
     .header-box {
         background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%); color: white; padding: 12px 20px;
@@ -219,7 +236,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         unsafe_allow_html=True,
     )
 
-    st.sidebar.subheader("📅 Tarih ve Birim Seçimi")
     col_yil, col_ay = st.sidebar.columns(2)
 
     with col_yil:
@@ -230,8 +246,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     _, gun_sayisi = calendar.monthrange(yil, ay)
     gun_secenekleri = list(range(1, gun_sayisi + 1))
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🏖 Resmi & İdari Tatil Günleri")
+    gecmis_ay_alani = st.sidebar.container()
+
 
     resmi_tatil_gunleri = st.sidebar.multiselect(
         "Tam Gün Tatil / Resmi Günler:",
@@ -246,8 +262,6 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         help="Arife veya yarım gün tatil günlerini seçiniz.",
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🧫 Kültür 8s Gündüz Vardiyası")
     kultur_8s_tatil_gunleri = st.sidebar.multiselect(
         "Kültür 8s Tatil Vardiyası Günleri:",
         options=resmi_tatil_gunleri,
@@ -320,8 +334,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Geçmiş Ay Rotasyonu (Önceki Ay Dosyası)")
-    uploaded_file = st.sidebar.file_uploader(
+    gecmis_ay_alani.subheader("📊 Geçmiş Ay Rotasyonu (Önceki Ay Dosyası)")
+    uploaded_file = gecmis_ay_alani.file_uploader(
         "Önceki Ayın Excel Dosyası:",
         type=["xlsx", "xls"],
         help="Sistemin ürettiği 3 sekmeli Excel dosyasını yükleyin.",
@@ -401,25 +415,25 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     otomatik_kultur_ni = [p.strip().upper() for p in str(last_row["Kültür (8s Vardiya)"]).split(",")
                                          if p.strip().upper() in nobetci_personeller]
 
-            st.sidebar.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
+            gecmis_ay_alani.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
         except Exception as e:
-            st.sidebar.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+            gecmis_ay_alani.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
-    gecmis_ay_son_gun_normal = st.sidebar.multiselect(
+    gecmis_ay_son_gun_normal = gecmis_ay_alani.multiselect(
         "🌙 Geçmiş Ay Son Günü NORMAL Nöbetçileri:",
         options=nobetci_personeller,
         default=list(set(otomatik_son_gun_normal)),
         help="Önceki ayın son günü normal nöbet tutan personeller.",
     )
 
-    gecmis_ay_son_gun_acil = st.sidebar.multiselect(
+    gecmis_ay_son_gun_acil = gecmis_ay_alani.multiselect(
         "🚨 Geçmiş Ay Son Günü ACİL Nöbetçileri:",
         options=[p for p in nobetci_personeller if p not in gecmis_ay_son_gun_normal],
         default=list(set(otomatik_son_gun_acil)),
         help="Önceki ayın son günü acil nöbet tutan personeller.",
     )
 
-    gecmis_ay_kultur_ni = st.sidebar.multiselect(
+    gecmis_ay_kultur_ni = gecmis_ay_alani.multiselect(
         "🧫 Önceki Aydan Kültür 8s Nİ Devri:",
         options=nobetci_personeller, default=list(set(otomatik_kultur_ni)),
         help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk mesai gününe kalan personeller.",
@@ -450,91 +464,69 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 return val
         return 0
 
-    # Mazeret & Sabit Nöbet
+    # Satır kimlikleri değişmez: aradan silinen satır diğer girişleri etkilemez.
+    def satir_grubunu_hazirla(grup, eski_sayac):
+        ids_key, next_key = grup + "_ids", grup + "_next"
+        if ids_key not in st.session_state:
+            st.session_state[ids_key] = list(range(st.session_state.get(eski_sayac, 1)))
+        if next_key not in st.session_state:
+            st.session_state[next_key] = max(st.session_state[ids_key], default=-1) + 1
+
+    def satir_ekle(grup):
+        row_id = st.session_state[grup + "_next"]
+        st.session_state[grup + "_ids"].append(row_id)
+        st.session_state[grup + "_next"] = row_id + 1
+
+    def satir_sil(grup, row_id, alanlar):
+        st.session_state[grup + "_ids"] = [i for i in st.session_state[grup + "_ids"] if i != row_id]
+        for alan in alanlar:
+            st.session_state.pop(f"{alan}_{row_id}", None)
+
+    satir_grubunu_hazirla("mazeret_satir", "mazeret_satir_sayisi")
+    satir_grubunu_hazirla("acil_satir", "acil_satir_sayisi")
+    satir_grubunu_hazirla("kisi_kisit", "kisi_kisit_sayisi")
+
     st.markdown('<div class="section-title">📋 Personel Mazeret ve Sabit Nöbet Girişleri</div>', unsafe_allow_html=True)
-    if "mazeret_satir_sayisi" not in st.session_state:
-        st.session_state.mazeret_satir_sayisi = 1
-
-    def mazeret_satir_ekle(): st.session_state.mazeret_satir_sayisi += 1
-    def mazeret_satir_cikar():
-        if st.session_state.mazeret_satir_sayisi > 1: st.session_state.mazeret_satir_sayisi -= 1
-
     izinler = {p: [] for p in nobetci_personeller}
     sabit_nobetler = {p: [] for p in nobetci_personeller}
     toplam_izin_sayisi, toplam_sabit_sayisi = 0, 0
-
-    for m_idx in range(st.session_state.mazeret_satir_sayisi):
-        c1, c2, c3 = st.columns([1.2, 1.8, 1.8])
-        with c1: p_secilen = st.selectbox(f"Personel #{m_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
-        with c2: selected_days = st.multiselect(f"Mazeret / İzin Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}")
-        with c3: selected_sabit_days = st.multiselect(f"Sabit Nöbet Günleri #{m_idx+1}:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}")
-
+    for m_idx in st.session_state.mazeret_satir_ids:
+        c1, c2, c3, c4 = st.columns([1.2, 1.8, 1.8, 0.35], vertical_alignment="bottom")
+        with c1: p_secilen = st.selectbox("Personel:", options=["Seçiniz..."] + nobetci_personeller, key=f"m_personel_{m_idx}")
+        with c2: selected_days = st.multiselect("Mazeret / İzin Günleri:", options=gun_secenekleri, default=[], key=f"m_leave_{m_idx}")
+        with c3: selected_sabit_days = st.multiselect("Sabit Nöbet Günleri:", options=gun_secenekleri, default=[], key=f"m_forced_{m_idx}")
+        with c4: st.button("🗑️", key=f"m_delete_{m_idx}", help="Bu personel giriş satırını sil", on_click=satir_sil, args=("mazeret_satir", m_idx, ("m_personel", "m_leave", "m_forced")))
         if p_secilen != "Seçiniz...":
             izinler[p_secilen].extend([d - 1 for d in selected_days])
             sabit_nobetler[p_secilen].extend([d - 1 for d in selected_sabit_days])
             toplam_izin_sayisi += len(selected_days)
             toplam_sabit_sayisi += len(selected_sabit_days)
+    st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=satir_ekle, args=("mazeret_satir",))
 
-    col_m_btn1, col_m_btn2, _ = st.columns([1.2, 1.2, 3.6])
-    with col_m_btn1: st.button("➕ Mazeret / Sabit Nöbet Ekle", on_click=mazeret_satir_ekle)
-    with col_m_btn2: st.button("➖ Mazeret Satırı Sil", on_click=mazeret_satir_cikar)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Acil Nöbet Girişleri
     st.markdown('<div class="section-title">🚨 Acil Nöbetçi Girişleri (Opsiyonel)</div>', unsafe_allow_html=True)
-    if "acil_satir_sayisi" not in st.session_state: st.session_state.acil_satir_sayisi = 1
-    def acil_satir_ekle(): st.session_state.acil_satir_sayisi += 1
-    def acil_satir_cikar():
-        if st.session_state.acil_satir_sayisi > 1: st.session_state.acil_satir_sayisi -= 1
-
     sabit_acil_nobetler = {p: [] for p in nobetci_personeller}
     toplam_sabit_acil_sayisi = 0
-
-    for a_idx in range(st.session_state.acil_satir_sayisi):
-        c1, c2 = st.columns([1.5, 3.3])
-        with c1: p_acil_secilen = st.selectbox(f"Acil Nöbetçi #{a_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
-        with c2: selected_acil_days = st.multiselect(f"Sabit Acil Nöbet Günleri #{a_idx+1}:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}")
-
+    for a_idx in st.session_state.acil_satir_ids:
+        c1, c2, c3 = st.columns([1.5, 3.3, 0.35], vertical_alignment="bottom")
+        with c1: p_acil_secilen = st.selectbox("Acil Nöbetçi:", options=["Seçiniz..."] + nobetci_personeller, key=f"a_personel_{a_idx}")
+        with c2: selected_acil_days = st.multiselect("Sabit Acil Nöbet Günleri:", options=gun_secenekleri, default=[], key=f"a_forced_{a_idx}")
+        with c3: st.button("🗑️", key=f"a_delete_{a_idx}", help="Bu acil giriş satırını sil", on_click=satir_sil, args=("acil_satir", a_idx, ("a_personel", "a_forced")))
         if p_acil_secilen != "Seçiniz...":
             sabit_acil_nobetler[p_acil_secilen].extend(selected_acil_days)
             toplam_sabit_acil_sayisi += len(selected_acil_days)
+    st.button("➕ Sabit Acil Nöbet Ekle", on_click=satir_ekle, args=("acil_satir",))
 
-    col_a_btn1, col_a_btn2, _ = st.columns([1.2, 1.2, 3.6])
-    with col_a_btn1: st.button("➕ Sabit Acil Nöbet Ekle", on_click=acil_satir_ekle)
-    with col_a_btn2: st.button("➖ Acil Satırı Sil", on_click=acil_satir_cikar)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Kişiler Arası Kısıtlar
     st.markdown('<div class="section-title">🤝 Kişiler Arası Nöbet Mesafe ve Çakışma Yasağı Kuralları</div>', unsafe_allow_html=True)
-    if "kisi_kisit_sayisi" not in st.session_state: st.session_state.kisi_kisit_sayisi = 1
-    def kisit_ekle(): st.session_state.kisi_kisit_sayisi += 1
-    def kisit_cikar():
-        if st.session_state.kisi_kisit_sayisi > 1: st.session_state.kisi_kisit_sayisi -= 1
-
     kisi_kisitlari = []
-    for k_idx in range(st.session_state.kisi_kisit_sayisi):
-        c1, c2, c3 = st.columns([1.2, 1, 2])
-        with c1: p_ana = st.selectbox(f"Ana Personel #{k_idx+1}:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
-        with c2: min_aralik = st.number_input(f"Min. Mesafe (Gün) #{k_idx+1}:", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
-        with c3: p_yasakli_list = st.multiselect(f"Birlikte/Yakın Nöbet Tutamayacağı Kişiler #{k_idx+1}:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
+    for k_idx in st.session_state.kisi_kisit_ids:
+        c1, c2, c3, c4 = st.columns([1.2, 1, 2, 0.35], vertical_alignment="bottom")
+        with c1: p_ana = st.selectbox("Ana Personel:", options=["Seçiniz..."] + nobetci_personeller, key=f"p_ana_{k_idx}")
+        with c2: min_aralik = st.number_input("Min. Mesafe (Gün):", min_value=0, max_value=15, value=1, key=f"min_aralik_{k_idx}")
+        with c3: p_yasakli_list = st.multiselect("Birlikte/Yakın Nöbet Tutamayacağı Kişiler:", options=[p for p in nobetci_personeller if p != p_ana], key=f"p_yasakli_{k_idx}")
+        with c4: st.button("🗑️", key=f"k_delete_{k_idx}", help="Bu kişiler arası kısıt satırını sil", on_click=satir_sil, args=("kisi_kisit", k_idx, ("p_ana", "min_aralik", "p_yasakli")))
         if p_ana != "Seçiniz..." and p_yasakli_list:
             kisi_kisitlari.append({"ana": p_ana, "aralik": min_aralik, "yasaklilar": p_yasakli_list})
-
-    col_btn1, col_btn2, _ = st.columns([1, 1, 4])
-    with col_btn1: st.button("➕ Yeni Kısıt Ekle", on_click=kisit_ekle)
-    with col_btn2: st.button("➖ Kısıt Sil", on_click=kisit_cikar)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("👥 Nöbetçi Kadro", f"{len(nobetci_personeller)} Kişi")
-    m2.metric("📅 Ayın Gün Sayısı", f"{gun_sayisi} Gün")
-    m3.metric("🎯 Nöbet Slotu", f"{gun_sayisi * gunluk_nobetci * (3 if birim_secimi=='Tüm Laboratuvar (Birleşik)' else 1)} Nöbet")
-    m4.metric("🏖️ Kayıtlı İzinler", f"{toplam_izin_sayisi} Gün")
-    m5.metric("📌 Sabit Nöbetler", f"{toplam_sabit_sayisi} Gün")
-    m6.metric("🚨 Sabit Acil Nöbet", f"{toplam_sabit_acil_sayisi} Gün")
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.button("➕ Yeni Kısıt Ekle", on_click=satir_ekle, args=("kisi_kisit",))
 
     def is_day_off(yil, ay, day, resmi_tatil_gunleri):
         dt = datetime.date(yil, ay, day)
