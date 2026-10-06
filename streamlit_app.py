@@ -71,6 +71,22 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
         ws.column_dimensions[get_column_letter(d+4)].hidden = d > n
     def base(d):
         return 0 if datetime.date(yil,ay,d).weekday()>=5 or d in full else (5 if d in half else 8)
+    # Şablonun önceki aya ait renklerini bütün gün sütunlarında yenile.
+    from copy import copy
+    body_font = copy(ws.cell(9,5).font)
+    body_font.color = '000000'
+    body_font.bold = False
+    for d in range(1,32):
+        off = d<=n and base(d)==0
+        fill = PatternFill('solid',fgColor='D9D9D9' if off else 'FFFFFF')
+        for r in range(7,34):
+            ws.cell(r,d+4).fill = copy(fill)
+            if r>=9:
+                ws.cell(r,d+4).font = copy(body_font)
+    def next_day_off(dt):
+        if dt.weekday()>=5: return True
+        if (dt.year,dt.month)==(yil,ay): return dt.day in full
+        return (dt.month,dt.day) in {(1,1),(4,23),(5,1),(5,19),(7,15),(8,30),(10,29)}
     target = sum(base(d) for d in range(1,n+1))
     matched, preview, notices = set(), [], []
     for r in range(9,34):
@@ -84,7 +100,8 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
         if len(candidates)!=1: raise ValueError(f'Şablondaki doktor çalışma listesiyle eşleştirilemedi: {name}')
         person = candidates[0]; matched.add(person); codes = records[person]
         duties = {d for d,v in codes.items() if v=='L14'}
-        ni = {d for d,v in codes.items() if v=='L15'} | {d+1 for d in duties if d<n}
+        ni = ({d for d,v in codes.items() if v=='L15'} | {d+1 for d in duties if d<n})
+        ni = {d for d in ni if 1<=d<=n and base(d)>0}
         if duties & ni:
             raise ValueError(f'{name}: {sorted(duties & ni)} günlerinde nöbet ve nöbet izni çakışıyor.')
         total=night=normal=holiday_night=holiday_normal=0
@@ -94,7 +111,7 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
             if d in duties:
                 cell.value=24; total+=24
                 dt=datetime.date(yil,ay,d); nxt=dt+datetime.timedelta(days=1)
-                next_off=nxt.weekday()>=5 or (nxt.month==ay and nxt.day in full)
+                next_off=next_day_off(nxt)
                 if d in half: gn,nn=12,7
                 elif d in full or dt.weekday()>=5: gn,nn=(12,12) if next_off else (12,4)
                 elif d==n and not next_off: gn,nn=12,4
@@ -111,7 +128,7 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
             correction=base(1); night-=min(4,correction); normal-=max(0,correction-4)
         entitlement=night+normal+holiday_night+holiday_normal
         for c,value in zip(range(36,47),[total,monthly,entitlement,night,normal,0,0,holiday_night,holiday_normal,0,0]): ws.cell(r,c).value=value
-        if n in duties:
+        if n in duties and not next_day_off(datetime.date(yil,ay,n)+datetime.timedelta(days=1)):
             ws.cell(r,n+4).comment=Comment('Ertesi ayın 1. gününe Nİ aktarılmalıdır.','Puantaj')
             notices.append(f'{name}: sonraki ayın 1. günü Nİ.')
         preview.append({'Personel':name,**{str(d):ws.cell(r,d+4).value for d in range(1,n+1)},'Toplam Çalışma':total,'Aylık Çalışma':monthly,'Fazla Nöbet':entitlement,'Gece':night,'Normal':normal,'Bayram Gece':holiday_night,'Bayram Normal':holiday_normal})
