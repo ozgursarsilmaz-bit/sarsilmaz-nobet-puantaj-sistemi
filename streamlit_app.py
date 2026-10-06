@@ -21,7 +21,7 @@ def uzman_isim_anahtari(value):
 def uzman_calisma_oku(data, yil, ay):
     wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
     records = {}
-    if 'LAB.HEKİM BAZLI ÇALIŞMA LİST' in wb.sheetnames:
+    if 'LAB.HEKİM BAZLI ÇALIŞMA LİST' in wb.sheetnames and 'LAB.KLİNİK BAZLI ÇALIŞMA LİST.' not in wb.sheetnames:
         ws = wb['LAB.HEKİM BAZLI ÇALIŞMA LİST']
         import re
         title = ' '.join(str(cell.value or '') for row in ws.iter_rows(min_row=1,max_row=6) for cell in row)
@@ -66,12 +66,13 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
     months = ['OCAK','ŞUBAT','MART','NİSAN','MAYIS','HAZİRAN','TEMMUZ','AĞUSTOS','EYLÜL','EKİM','KASIM','ARALIK']
     ws['A1'] = f'TIBBİ MİKROBİYOLOJİ UZMAN DOKTOR\n{yil} {months[ay-1]} AYI NÖBET BİLDİRİMİ PUANTAJ ÇİZELGESİ'
     ws['AV7'],ws['AV8'] = yil,ay
-    for d in range(1,32): ws.cell(7,d+4).value = d if d<=n else None
+    for d in range(1,32):
+        ws.cell(7,d+4).value = d if d<=n else None
+        ws.column_dimensions[get_column_letter(d+4)].hidden = d > n
     def base(d):
         return 0 if datetime.date(yil,ay,d).weekday()>=5 or d in full else (5 if d in half else 8)
     target = sum(base(d) for d in range(1,n+1))
     matched, preview, notices = set(), [], []
-    leave_map = {'L16':'R','L17':'Yİ','L18':'GÖ','L19':'Mİ','L20':'Eİ'}
     for r in range(9,34):
         for c in range(5,50):
             ws.cell(r,c).value = None
@@ -86,11 +87,10 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
         ni = {d for d,v in codes.items() if v=='L15'} | {d+1 for d in duties if d<n}
         if duties & ni:
             raise ValueError(f'{name}: {sorted(duties & ni)} günlerinde nöbet ve nöbet izni çakışıyor.')
-        total=night=normal=holiday_night=holiday_normal=leave_hours=0
+        total=night=normal=holiday_night=holiday_normal=0
         for d in range(1,n+1):
             cell=ws.cell(r,d+4)
             cell.fill=PatternFill('solid',fgColor='D9D9D9' if base(d)==0 else 'FFFFFF')
-            code=codes.get(d,'')
             if d in duties:
                 cell.value=24; total+=24
                 dt=datetime.date(yil,ay,d); nxt=dt+datetime.timedelta(days=1)
@@ -103,11 +103,9 @@ def uzman_puantaj_olustur(data, yil, ay, tam_tatil=(), yarim_tatil=()):
                 if d in full or d in half: holiday_night+=gn; holiday_normal+=nn
                 else: night+=gn; normal+=nn
             elif d in ni: cell.value='Nİ'
-            elif code in leave_map:
-                cell.value=leave_map[code]; leave_hours+=base(d)
             else:
-                cell.value=base(d) or None; total+=base(d)
-        monthly=target-leave_hours
+                cell.value=base(d) or 'T'; total+=base(d)
+        monthly=target
         # Önceki ayın son nöbeti için kaynakta L15 varsa mesai mahsuplaşması.
         if 1 in ni and 1 not in duties and base(1):
             correction=base(1); night-=min(4,correction); normal-=max(0,correction-4)
