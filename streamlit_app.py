@@ -1308,9 +1308,17 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 for p2 in rule["yasaklilar"]:
                     for d1 in range(gun_sayisi):
                         for d2 in range(max(0, d1 - aralik), min(gun_sayisi, d1 + aralik + 1)):
-                            p1_gorev = x[(p1, d1)] + (k8[(p1, d1)] if p1 in kultur_nobetcileri else 0)
-                            p2_gorev = x[(p2, d2)] + (k8[(p2, d2)] if p2 in kultur_nobetcileri else 0)
-                            zorunlu_kisit(p1_gorev + p2_gorev <= 1, f"{p1} ({tarih(d1)}) / {p2} ({tarih(d2)}): kişiler arası {aralik} gün mesafe/çakışma yasağı")
+                            # İki 24s nöbet arasında kullanıcının girdiği mesafe korunur.
+                            zorunlu_kisit(x[(p1, d1)] + x[(p2, d2)] <= 1,
+                                f"{p1} ({tarih(d1)}) / {p2} ({tarih(d2)}): 24s nöbetler arası {aralik} gün mesafe/çakışma yasağı")
+                            # Kültür 8s içeren kişiler arası eşleşmelerde sadece
+                            # aynı gün çakışması yasak; komşu günler serbest.
+                            if d1 == d2:
+                                p1_gorev = x[(p1, d1)] + (k8[(p1, d1)] if p1 in kultur_nobetcileri else 0)
+                                p2_gorev = x[(p2, d2)] + (k8[(p2, d2)] if p2 in kultur_nobetcileri else 0)
+                                zorunlu_kisit(p1_gorev + p2_gorev <= 1,
+                                    f"{p1} / {p2} — {tarih(d1)}: aynı gün nöbet / Kültür 8s çakışma yasağı")
+
 
             def gun_kategorisi_indeksleri(w_list):
                 return [d for d in range(gun_sayisi) if datetime.date(yil, ay, d + 1).weekday() in w_list]
