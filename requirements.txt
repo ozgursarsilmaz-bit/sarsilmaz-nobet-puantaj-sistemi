@@ -1,6 +1,6 @@
-streamlit>=1.42,<2
+streamlit
 pandas
 openpyxl
 ortools
 xlsxwriter
-streamlit-cookies-controller==0.0.4
+streamlit-cookies-controller
