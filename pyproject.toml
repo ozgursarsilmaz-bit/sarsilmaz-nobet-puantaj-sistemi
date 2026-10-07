@@ -5,11 +5,12 @@ description = "A simple Streamlit app template."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "streamlit",
+    "streamlit>=1.42,<2",
     "pandas",
     "openpyxl",
     "ortools",
     "xlsxwriter",
+    "streamlit-cookies-controller==0.0.4",
 ]
 
 [tool.uv]
