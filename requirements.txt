@@ -3,3 +3,4 @@ pandas
 openpyxl
 ortools
 xlsxwriter
+streamlit-cookies-controller==0.0.4
