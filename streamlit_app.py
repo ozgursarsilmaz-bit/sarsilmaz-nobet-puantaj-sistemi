@@ -284,6 +284,148 @@ def dagit_acil_nobet(personeller, nobetler, sabit_acil, gun_saatleri, devirler, 
     return secimler, rapor
 
 
+
+def giris_sifre_kontrol(password, encoded):
+    import hashlib, hmac
+    try:
+        scheme, rounds, salt, expected = encoded.split('$')
+        rounds = int(rounds)
+        salt = bytes.fromhex(salt)
+        expected = bytes.fromhex(expected)
+        if scheme!='pbkdf2_sha256' or not 100000<=rounds<=2000000 or len(salt)<16 or len(expected)!=32:
+            return False
+        actual=hashlib.pbkdf2_hmac('sha256',password.encode('utf-8'),salt,rounds)
+        return hmac.compare_digest(actual,expected)
+    except (ValueError,TypeError,AttributeError):
+        return False
+
+def giris_token_anahtari(password_hash, cookie_secret):
+    import hashlib,hmac
+    return hmac.new(cookie_secret.encode('utf-8'),password_hash.encode('utf-8'),hashlib.sha256).digest()
+
+def giris_token_uret(key, expiry):
+    import secrets,hmac,hashlib
+    payload=f'v1.{int(expiry)}.{secrets.token_hex(16)}'
+    return payload+'.'+hmac.new(key,payload.encode(),hashlib.sha256).hexdigest()
+
+def giris_token_dogrula(token,key,now):
+    import hmac,hashlib
+    try:
+        if not isinstance(token,str) or len(token)>256: return False
+        version,expiry,nonce,signature=token.split('.')
+        payload=f'{version}.{expiry}.{nonce}'
+        if version!='v1' or len(nonce)!=32: return False
+        if not hmac.compare_digest(signature,hmac.new(key,payload.encode(),hashlib.sha256).hexdigest()): return False
+        return int(expiry)>int(now)
+    except (TypeError,ValueError,AttributeError):
+        return False
+
+@st.cache_resource
+def giris_deneme_deposu():
+    import threading
+    return {},threading.Lock()
+
+def uygulama_giris_kapisi():
+    import time,hashlib
+    try:
+        config=dict(st.secrets['app_access'])
+    except (KeyError,FileNotFoundError):
+        st.title('🔒 Mikrobiyoloji Laboratuvarı')
+        st.info('Giriş ayarı henüz yapılmadı. Uygulama sahibi Streamlit Settings → Secrets bölümüne app_access ayarlarını eklemelidir. Kurulum paketindeki rehberi kullanın.')
+        st.stop()
+    enabled=config.get('enabled',True)
+    if enabled is False:
+        st.sidebar.caption('🔓 Şifre koruması Streamlit ayarlarından kapalı.')
+        return
+    if enabled is not True:
+        st.error('app_access.enabled değeri true veya false olmalıdır.');st.stop()
+    password_hash=config.get('password_hash','')
+    cookie_secret=config.get('cookie_secret','')
+    try:
+        scheme,rounds,salt,digest=password_hash.split('$')
+        valid=(scheme=='pbkdf2_sha256' and 100000<=int(rounds)<=2000000 and len(bytes.fromhex(salt))>=16 and len(bytes.fromhex(digest))==32 and isinstance(cookie_secret,str) and len(cookie_secret)>=32)
+    except (ValueError,TypeError,AttributeError): valid=False
+    if not valid:
+        st.error('Şifre koruması ayarları eksik veya hatalı. Settings → Secrets ayarlarını kontrol edin.');st.stop()
+    try:
+        from streamlit_cookies_controller import CookieController
+    except ImportError:
+        st.error('Giriş bileşeni kurulmamış. requirements.txt dosyasına streamlit-cookies-controller ekleyin.');st.stop()
+    name='mikrobiyoloji_access_v1'
+    # Çerezleri ilk HTTP isteğinden oku; bileşenin gecikmeli getAll
+    # yanıtı None olsa bile giriş/çıkış akışı kesilmez.
+    if not isinstance(st.session_state.get('_access_cookies'),dict):
+        st.session_state['_access_cookies']=dict(st.context.cookies)
+    if st.session_state.get('_access_token'):
+        st.session_state['_access_cookies'][name]=st.session_state['_access_token']
+    controller=CookieController(key="_access_cookies")
+    key=giris_token_anahtari(password_hash,cookie_secret)
+    now=time.time()
+    if st.session_state.get('_access_delete_cookie'):
+        if not controller.get(name):
+            st.session_state['_access_cookies'][name]='expired'
+        controller.remove(name,secure=True)
+    token=st.session_state.get('_access_token')
+    if not token and not st.session_state.get('_access_logged_out',False):
+        for candidate in [st.context.cookies.get(name),controller.get(name)]:
+            if giris_token_dogrula(candidate,key,now):
+                token=candidate
+                break
+    authenticated=giris_token_dogrula(token,key,now)
+    if authenticated:
+        st.session_state['_access_token']=token
+        if st.session_state.get('_access_pending_cookie')==token:
+            controller.set(name,token,max_age=30*24*60*60,path='/',secure=True,same_site='strict')
+        with st.sidebar.expander('🔐 Giriş ve şifre ayarları'):
+            st.caption('Şifre koyma, değiştirme veya kaldırma: Streamlit → Manage app → Settings → Secrets.')
+            if st.button('Çıkış yap / bu bilgisayarı unut',key='access_logout'):
+                if controller.get(name): controller.remove(name,secure=True)
+                # Hesaplar, yüklenen dosyalar ve sonuçlar da bu oturumdan silinir.
+                for state_key in list(st.session_state):
+                    if state_key == '_access_cookies': continue
+                    del st.session_state[state_key]
+                st.session_state['_access_logged_out']=True
+                st.session_state['_access_delete_cookie']=True
+                st.rerun()
+        return
+    st.session_state.pop('_access_token',None)
+    st.title('🔒 Mikrobiyoloji Laboratuvarı')
+    st.caption('Devam etmek için giriş şifresini yazın.')
+    attempts,lock=giris_deneme_deposu()
+    client=str(getattr(st.context,'ip_address',None) or 'unknown')
+    bucket=hashlib.sha256(client.encode()).hexdigest()
+    with lock:
+        recent=[t for t in attempts.get(bucket,[]) if t>now-60]
+        attempts[bucket]=recent
+    if len(recent)>=5:
+        st.warning('Çok sayıda hatalı giriş. Bir dakika sonra tekrar deneyin.');st.stop()
+    with st.form('access_login'):
+        password=st.text_input('Şifre',type='password',key='access_password')
+        remember=st.checkbox('Bu bilgisayarda 30 gün hatırla',value=False)
+        submitted=st.form_submit_button('Giriş yap',type='primary')
+    if submitted:
+        # Denemeler oturum değiştirerek aşılamasın; sayaç sunucuda tutulur.
+        with lock:
+            recent=[t for t in attempts.get(bucket,[]) if t>time.time()-60]
+            allowed=len(recent)<5
+            if allowed: attempts[bucket]=recent+[time.time()]
+        if allowed and giris_sifre_kontrol(password,password_hash):
+            with lock: attempts.pop(bucket,None)
+            ttl=30*24*60*60 if remember else 8*60*60
+            token=giris_token_uret(key,time.time()+ttl)
+            st.session_state['_access_token']=token
+            st.session_state['_access_logged_out']=False
+            st.session_state['_access_delete_cookie']=not remember
+            st.session_state['_access_pending_cookie']=token if remember else None
+            if remember:
+                controller.set(name,token,max_age=ttl,path='/',secure=True,same_site='strict')
+            else:
+                if controller.get(name): controller.remove(name,secure=True)
+            st.rerun()
+        else:
+            st.error('Şifre hatalı veya giriş deneme sınırına ulaşıldı.')
+    st.stop()
+
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(
     page_title="Mikrobiyoloji Laboratuvarı Yönetim Sistemi",
@@ -291,6 +433,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+uygulama_giris_kapisi()
 
 # --- SESSION STATE (OTURUM HAFIZASI) ---
 if "hesaplanan_sonuc" not in st.session_state:
