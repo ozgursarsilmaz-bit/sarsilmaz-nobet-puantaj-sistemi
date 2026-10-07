@@ -182,6 +182,31 @@ def asistan_puantaj_olustur(data,yil,ay,tam_tatil=(),yarim_tatil=()):
     return doktor_puantaj_olustur(asistan_calisma_oku(data,yil,ay),yil,ay,tam_tatil,yarim_tatil,
                                 sablon=ASISTAN_PUANTAJ_SABLON,baslik='ASİSTAN DOKTOR')
 
+
+def kultur8_denge_hedefi(model, k8, personeller, gunler, devirler):
+    """Esnek aylık tekrar önceliği, ardından birikimli adet dengesi."""
+    if not personeller or not gunler:
+        return 0
+    onceki = {p: max(0, int(devirler.get(p, 0))) for p in personeller}
+    taban = min(onceki.values())
+    ust = max(onceki.values()) - taban + len(gunler)
+    kareler, tekrarlar = [], []
+    for idx, p in enumerate(personeller):
+        adet = model.NewIntVar(0, len(gunler), f"k8_aylik_{idx}")
+        model.Add(adet == sum(k8[(p, d)] for d in gunler))
+        tekrar = model.NewIntVar(0, max(0, len(gunler)-1), f"k8_tekrar_{idx}")
+        model.AddMaxEquality(tekrar, [0, adet-1])
+        toplam = model.NewIntVar(0, ust, f"k8_birikim_{idx}")
+        model.Add(toplam == onceki[p]-taban+adet)
+        kare = model.NewIntVar(0, ust*ust, f"k8_kare_{idx}")
+        model.AddMultiplicationEquality(kare, [toplam, toplam])
+        tekrarlar.append(tekrar)
+        kareler.append(kare)
+    # Bir tekrarın azalması birikim hedefinin bütün olası farklarından ağırdır.
+    # Üst sınır bir yasak değildir; kısıtlar gerektirirse tekrar mümkündür.
+    agirlik = len(personeller)*ust*ust+1
+    return agirlik*sum(tekrarlar)+sum(kareler)
+
 def dagit_acil_nobet(personeller, nobetler, sabit_acil, gun_saatleri, devirler, arama_suresi):
     """Normal nöbetleri değiştirmeden ortak havuzda günde tek acil seçer."""
     gunler = sorted(gun_saatleri)
@@ -1198,6 +1223,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 model.Add(ifade).OnlyEnforceIf(lit)
                 model.AddAssumption(lit)
                 kisit_aciklamalari[lit.Index()] = aciklama
+                return lit
 
 
             for p in nobetci_personeller:
@@ -1221,7 +1247,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 else:
                     for p in kultur_nobetcileri: zorunlu_kisit(k8[(p, d)] == 0, f"{p} — {tarih(d)}: Kültür 8s vardiya günü değil")
 
+            kultur_tek_vardiya_kisitlari = []
             for p in kultur_nobetcileri:
+                kultur_tek_vardiya_kisitlari.append(zorunlu_kisit(
+                    sum(k8[(p, d)] for d in kultur_8s_gun_indeksleri) <= 1,
+                    f"{p} — Kültür 8s: aynı ayda en fazla 1 vardiya"))
                 for d in kultur_8s_gun_indeksleri:
                     ni_days = kultur_ni_gunleri(yil, ay, gun_sayisi, {d + 1}, resmi_tatil_gunleri)
                     for ni_day in ni_days:
@@ -1365,23 +1395,16 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         model.AddMaxEquality(tekrar, [0, sum(x[(p, d)] for d in indices) - 1])
                         yayilim_cezalari.append(tekrar)
 
-            kultur_hedefleri = []
-            if kultur_nobetcileri:
-                devirler = [int(get_prev_kultur8(p)) for p in kultur_nobetcileri]
-                alt, ust = min(devirler), max(devirler) + len(kultur_8s_gun_indeksleri)
-                degerler = []
-                for p, devir in zip(kultur_nobetcileri, devirler):
-                    var = model.NewIntVar(alt, ust, f"kultur_adet_{p}")
-                    model.Add(var == devir + sum(k8[(p, d)] for d in kultur_8s_gun_indeksleri))
-                    degerler.append(var)
-                kultur_hedefleri.append(fark_hedefi(degerler, alt, ust, "kultur8"))
+            kultur_hedef = kultur8_denge_hedefi(
+                model, k8, kultur_nobetcileri, kultur_8s_gun_indeksleri,
+                {p: int(get_prev_kultur8(p)) for p in kultur_nobetcileri})
 
             hedefler = [
                 ("T.NöbetSaati dengesi", sum(saat_farklari)),
                 ("Nöbet adedi dengesi", sum(adet_farklari)),
                 ("Gün türü devir dengesi", sum(kategori_farklari)),
                 ("Haftalara yayılım", sum(yayilim_cezalari)),
-                ("Kültür 8s adet dengesi", sum(kultur_hedefleri)),
+                ("Kültür 8s aylık tekrar / devir dengesi", kultur_hedef),
             ]
             solver = None
             status = cp_model.UNKNOWN
@@ -1389,11 +1412,29 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             ilerleme = st.empty()
             for asama, (ad, hedef) in enumerate(hedefler, 1):
                 ilerleme.info(f"Dağıtım kontrolü {asama}/5: {ad}")
+                if asama == 5 and solver is not None:
+                    # Üst önceliklerde seçilen 24s nöbet listesi tamamlandı.
+                    # Küçük vardiya probleminde yalnızca 8s seçimlerini optimize et.
+                    for var in x.values():
+                        model.Add(var == solver.Value(var))
                 model.Minimize(hedef)
                 aday = cp_model.CpSolver()
                 aday.parameters.num_search_workers = 1
                 aday.parameters.max_time_in_seconds = float(cozum_arama_suresi)
                 aday_status = aday.Solve(model)
+                if (asama == 1 and aday_status == cp_model.INFEASIBLE
+                        and kultur_tek_vardiya_kisitlari):
+                    # Yalnızca tek vardiya sınırını aç; diğer bütün zorunlu
+                    # kurallar ve geçmişe göre dengeleme korunur.
+                    cap_indices = {lit.Index() for lit in kultur_tek_vardiya_kisitlari}
+                    model.ClearAssumptions()
+                    model.AddAssumptions([model.GetBoolVarFromProtoIndex(i)
+                                          for i in kisit_aciklamalari if i not in cap_indices])
+                    for lit in kultur_tek_vardiya_kisitlari:
+                        model.Add(lit == 0)
+                    aday_status = aday.Solve(model)
+                    if aday_status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                        st.warning("Kültür 8s: kişi başına en fazla 1 vardiya ile çözüm yok. Diğer kısıtlar korunarak ikinci vardiya son çare olarak açıldı; tekrar sayısı en aza indirilecek.")
                 if aday_status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                     if solver is None:
                         solver, status = aday, aday_status
@@ -1414,6 +1455,32 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 model.ClearHints()
                 for var in list(x.values()) + list(k8.values()):
                     model.AddHint(var, solver.Value(var))
+            if (kultur_nobetcileri and solver is not None
+                    and status in [cp_model.OPTIMAL, cp_model.FEASIBLE]
+                    and asama < 5):
+                # Saat hedefinde süre dolsa bile mevcut normal nöbet listesini
+                # değiştirmeden küçük Kültür 8s problemini tamamla.
+                ilerleme.info("Kültür 8s aylık tekrar / devir dengesi kontrol ediliyor")
+                for var in x.values():
+                    model.Add(var == solver.Value(var))
+                model.Minimize(kultur_hedef)
+                model.ClearHints()
+                for var in list(x.values()) + list(k8.values()):
+                    model.AddHint(var, solver.Value(var))
+                aday = cp_model.CpSolver()
+                aday.parameters.num_search_workers = 1
+                aday.parameters.max_time_in_seconds = float(cozum_arama_suresi)
+                yeni_status = aday.Solve(model)
+                if yeni_status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                    solver, status = aday, yeni_status
+                    optimizasyon_ozeti.append({"Öncelik": 5,
+                        "Hedef": "Kültür 8s aylık tekrar / devir dengesi",
+                        "Fark / ceza": int(solver.Value(kultur_hedef)),
+                        "En iyi sonuç kanıtlandı": status == cp_model.OPTIMAL})
+                    if status != cp_model.OPTIMAL:
+                        st.warning("Kültür 8s: geçerli dağıtım bulundu; en iyi denge süre içinde kanıtlanamadı.")
+                else:
+                    st.warning("Kültür 8s dengelemesi süre içinde tamamlanamadı; önceki geçerli dağıtım korundu.")
             ilerleme.empty()
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 nobet_dict = {p: set() for p in nobetci_personeller}
