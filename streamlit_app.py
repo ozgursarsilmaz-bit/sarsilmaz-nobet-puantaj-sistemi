@@ -692,6 +692,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     otomatik_kultur_ni = []
     gecmis_24s_kayitlari = []
     gecmis_tarih_hatalari = []
+    gecmis_donem_disindaki_tarihler = set()
     gecmis_kapsanan_tarihler = set()
 
     if uploaded_file is not None:
@@ -747,13 +748,28 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                             try:
                                 if isinstance(raw_date, (int, float)):
                                     raise ValueError("Sayısal tarih desteklenmiyor")
-                                gorev_tarihi = pd.to_datetime(raw_date, dayfirst=True, errors="raise").date()
+                                if isinstance(raw_date, datetime.datetime):
+                                    gorev_tarihi = raw_date.date()
+                                elif isinstance(raw_date, datetime.date):
+                                    gorev_tarihi = raw_date
+                                else:
+                                    # ISO tarihleri dayfirst ile yorumlamak ay/günü değiştirebilir.
+                                    date_text = str(raw_date).strip()
+                                    gorev_tarihi = None
+                                    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
+                                        try:
+                                            gorev_tarihi = datetime.datetime.strptime(date_text, fmt).date()
+                                            break
+                                        except ValueError:
+                                            pass
+                                    if gorev_tarihi is None:
+                                        raise ValueError("Desteklenmeyen tarih biçimi")
                             except (ValueError, TypeError, OverflowError):
                                 gecmis_tarih_hatalari.append(f"Geçersiz görev tarihi: {raw_date}")
                                 continue
                             ay_baslangici = datetime.date(yil, ay, 1)
                             if (gorev_tarihi.year, gorev_tarihi.month) != ((ay_baslangici - datetime.timedelta(days=1)).year, (ay_baslangici - datetime.timedelta(days=1)).month):
-                                gecmis_tarih_hatalari.append(f"Önceki döneme ait olmayan tarih: {gorev_tarihi}")
+                                gecmis_donem_disindaki_tarihler.add(gorev_tarihi)
                                 continue
                             gecmis_kapsanan_tarihler.add(gorev_tarihi)
                             for birim_col in ["PCR", "Mikro", "Kültür"]:
@@ -794,6 +810,19 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         except Exception as e:
             gecmis_ay_alani.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
 
+    if gecmis_donem_disindaki_tarihler:
+        beklenen_donem = datetime.date(yil, ay, 1) - datetime.timedelta(days=1)
+        bulunan_donemler = ", ".join(sorted({dt.strftime("%m.%Y") for dt in gecmis_donem_disindaki_tarihler}))
+        gecmis_ay_alani.warning(
+            f"Seçili liste dönemi: {ay:02d}.{yil}. Beklenen önceki dönem: {beklenen_donem:%m.%Y}. "
+            f"Dosyada farklı dönem kayıtları var: {bulunan_donemler}. "
+            "Bu kayıtlar aylar arası dinlenmede kullanılmadı. Doğru önceki ay dosyasını yükleyin veya geçmiş görevleri elle tamamlayın.")
+        if not gecmis_kapsanan_tarihler:
+            # Yanlış dönemin normal/acil son satırını önceki ay görevi sanma.
+            otomatik_son_gun_normal = []
+            otomatik_son_gun_acil = []
+            gecmis_istatistik = {}
+            gecmis_acil_istatistik = {}
     if gecmis_kapsanan_tarihler:
         onceki_son = datetime.date(yil, ay, 1) - datetime.timedelta(days=1)
         otomatik_son_gun_normal = [p for p, dt, tur in gecmis_24s_kayitlari if dt == onceki_son and tur == "Normal"]
