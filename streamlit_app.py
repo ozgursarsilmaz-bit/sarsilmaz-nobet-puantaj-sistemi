@@ -206,6 +206,13 @@ def kultur8_denge_hedefi(model, k8, personeller, gunler, devirler):
     agirlik = len(personeller)*ust*ust+1
     return agirlik*sum(tekrarlar)+sum(kareler)
 
+def model_net_hakedis(model, brut, mahsup, ust, ad):
+    """Personel mahsup motorunun toplamını modeller; ödeme hesabını değiştirmez."""
+    net = model.NewIntVar(0, ust, ad)
+    model.AddMaxEquality(net, [0, brut - mahsup])
+    return net
+
+
 def dagit_acil_nobet(personeller, nobetler, sabit_acil, gun_saatleri, devirler, arama_suresi):
     """Normal nöbetleri değiştirmeden ortak havuzda günde tek acil seçer."""
     gunler = sorted(gun_saatleri)
@@ -1213,6 +1220,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         next_off = next_status == 0
         if day in yarim_gun_tatil_gunleri:
             return 12, 7
+        # Ay sonu normal mesai nöbetinde Nİ sonraki aya kalır.
+        # Ertesi gün tatil olsa da bu ay hakediş 12 gece + 4 normaldir.
+        if day == gun_sayisi and current == 8:
+            return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
         if day == gun_sayisi and not next_off:
             return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
         if current == 0:
@@ -1648,6 +1659,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         "k8": kultur_8s_tatil_gunleri, "ihtiyac": gunluk_nobetci,
         "dinlenme": dinlenme_gun_sayisi, "esnek": esnek_personel,
         "persembe": persembe_pazar_yasagi, "haftasonu": cuma_haftasonu_siki_kural,
+        "dagitim_politikasi": "net_hakedis_v1",
         "sure": cozum_arama_suresi, "izinler": izinler,
         "sabit": sabit_nobetler, "acil": sabit_acil_nobetler, "mesafeler": kisi_kisitlari,
         "gecmis": gecmis_24s_kayitlari, "normal_son": gecmis_ay_son_gun_normal,
@@ -1860,6 +1872,34 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             saat_farklari, adet_farklari, kategori_farklari = [], [], []
             gunluk_saatler = [sum(calculate_nobet_hakedis(yil, ay, d + 1, gun_sayisi,
                               resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in range(gun_sayisi)]
+            # Tek ortak acil havuzu: net normal/acil hakediş ayrı mahsuplanır.
+            acil_model = {(p,d): model.NewBoolVar(f"net_acil_{p}_{d}")
+                          for p in nobetci_personeller for d in range(gun_sayisi)}
+            for d in range(gun_sayisi):
+                model.Add(sum(acil_model[(p,d)] for p in nobetci_personeller) == 1)
+                for p in nobetci_personeller:
+                    model.Add(acil_model[(p,d)] <= x[(p,d)])
+                    if d+1 in sabit_acil_nobetler.get(p,()):
+                        model.Add(acil_model[(p,d)] == 1)
+            net_toplam, net_acil, acil_aldi = {}, {}, {}
+            saat_ust = sum(gunluk_saatler)
+            ilk_status = ortak_gun_statusu(datetime.date(yil,ay,1),yil,ay,
+                                           resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+            for p in nobetci_personeller:
+                # İlk gün günlük kayıtta Nİ olduğunda motorun aynı devir mahsubu.
+                ilk_ni = (p in gecmis_ay_son_gun_nobetcileri
+                          or (p in gecmis_ay_kultur_ni and ilk_mesai_gunu == 1))
+                normal_mahsup = ilk_status if ilk_ni and p in gecmis_ay_son_gun_normal else 0
+                acil_mahsup = ilk_status if ilk_ni and p in gecmis_ay_son_gun_acil else 0
+                if acil_mahsup: normal_mahsup = 0  # Puantajdaki acil önceliği.
+                brut = sum(x[(p,d)] * gunluk_saatler[d] for d in range(gun_sayisi))
+                risk = sum(acil_model[(p,d)] * gunluk_saatler[d] for d in range(gun_sayisi))
+                net_acil[p] = model_net_hakedis(model,risk,acil_mahsup,saat_ust,f"net_risk_{p}")
+                normal = model_net_hakedis(model,brut-risk,normal_mahsup,saat_ust,f"net_normal_{p}")
+                net_toplam[p] = model.NewIntVar(0,saat_ust,f"net_toplam_{p}")
+                model.Add(net_toplam[p] == normal + net_acil[p])
+                acil_aldi[p] = model.NewBoolVar(f"net_acil_aldi_{p}")
+                model.AddMaxEquality(acil_aldi[p],[acil_model[(p,d)] for d in range(gun_sayisi)])
             def fark_hedefi(degerler, alt, ust, ad):
                 en_az = model.NewIntVar(alt, ust, f"min_{ad}")
                 en_cok = model.NewIntVar(alt, ust, f"max_{ad}")
@@ -1876,7 +1916,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 for p in personeller:
                     saat = model.NewIntVar(0, sum(gunluk_saatler), f"hakedis_{p}")
                     adet = model.NewIntVar(0, gun_sayisi, f"adet_{p}")
-                    model.Add(saat == sum(x[(p, d)] * gunluk_saatler[d] for d in range(gun_sayisi)))
+                    model.Add(saat == net_toplam[p])
                     model.Add(adet == sum(x[(p, d)] for d in range(gun_sayisi)))
                     saatler.append(saat)
                     adetler.append(adet)
@@ -1884,9 +1924,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 adet_farki = fark_hedefi(adetler, 0, gun_sayisi, birim + "_adet")
                 # Günlük ihtiyaç sabit: toplamın kişi sayısına bölünmesinden
                 # gelen zorunlu alt sınırlar aramayı hızlandırır.
-                saat_adimi = math.gcd(*gunluk_saatler)
-                if (sum(gunluk_saatler) * gunluk_nobetci // saat_adimi) % len(personeller):
-                    model.Add(saat_farki >= saat_adimi)
+                # Mahsuplar toplamı değiştirdiğinden brüt saat alt sınırı kullanılamaz.
                 if (gun_sayisi * gunluk_nobetci) % len(personeller):
                     model.Add(adet_farki >= 1)
                 saat_farklari.append(saat_farki)
@@ -1937,19 +1975,73 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 {p: int(get_prev_kultur8(p)) for p in kultur_nobetcileri})
 
             hedefler = [
-                ("T.NöbetSaati dengesi", sum(saat_farklari)),
+                ("Net hakediş saat dengesi", sum(saat_farklari)),
                 ("Nöbet adedi dengesi", sum(adet_farklari)),
                 ("Gün türü devir dengesi", sum(kategori_farklari)),
                 ("Haftalara yayılım", sum(yayilim_cezalari)),
                 ("Kültür 8s aylık tekrar / devir dengesi", kultur_hedef),
             ]
+            def net_acil_dengele(solver):
+                acil_kapsami = "Korunmuş net hakediş/adet/gün türü/yayılım değerleri"
+                acil_devir = {p:int(get_prev_acil(p)) for p in nobetci_personeller}
+                devir_min, devir_max = min(acil_devir.values()), max(acil_devir.values())
+                birikimli_acil = []
+                for p in nobetci_personeller:
+                    v = model.NewIntVar(devir_min,devir_max+saat_ust,f"acil_net_birikim_{p}")
+                    model.Add(v == acil_devir[p] + net_acil[p])
+                    birikimli_acil.append(v)
+                acil_hedefler = [
+                    ("Acil verilen farklı personel sayısı",len(nobetci_personeller)-sum(acil_aldi.values())),
+                    ("Görev alacak personelde düşük devir önceliği",sum(acil_devir[p]*acil_aldi[p] for p in nobetci_personeller)),
+                    ("Bu ay net acil saat dengesi",fark_hedefi(list(net_acil.values()),0,saat_ust,"net_acil")),
+                    ("Devir + bu ay net acil saat dengesi",fark_hedefi(birikimli_acil,devir_min,devir_max+saat_ust,"net_acil_devir")),
+                ]
+                acil_dagitim_ozeti = []
+                for ad,hedef in acil_hedefler:
+                    model.ClearHints()
+                    for var in list(x.values()) + list(k8.values()) + list(acil_model.values()):
+                        model.AddHint(var,solver.Value(var))
+                    model.Minimize(hedef)
+                    aday = cp_model.CpSolver()
+                    aday.parameters.num_search_workers = 1
+                    aday.parameters.max_time_in_seconds = float(cozum_arama_suresi)
+                    acil_status = aday.Solve(model)
+                    if acil_status in [cp_model.UNKNOWN, cp_model.FEASIBLE]:
+                        # Büyük problemde yaklaşık acil seçimiyle yetinme:
+                        # bulunan 24s liste üzerinde özgün küçük havuzu tamamla.
+                        anchor_solver = aday if acil_status == cp_model.FEASIBLE else solver
+                        for var in x.values(): model.Add(var == anchor_solver.Value(var))
+                        model.ClearHints()
+                        for var in list(x.values()) + list(k8.values()) + list(acil_model.values()):
+                            model.AddHint(var,anchor_solver.Value(var))
+                        acil_kapsami = "Süre nedeniyle sabitlenmiş 24s liste ve korunmuş net denge"
+                        tekrar = cp_model.CpSolver()
+                        tekrar.parameters.num_search_workers = 1
+                        tekrar.parameters.max_time_in_seconds = float(cozum_arama_suresi)
+                        tekrar_status = tekrar.Solve(model)
+                        if tekrar_status in [cp_model.OPTIMAL,cp_model.FEASIBLE]:
+                            aday, acil_status = tekrar, tekrar_status
+                    if acil_status not in [cp_model.OPTIMAL,cp_model.FEASIBLE]:
+                        acil_dagitim_ozeti.append({"Hedef":ad,"Durum":"Önceki geçerli acil seçimi korundu"})
+                        break
+                    solver = aday
+                    deger = int(solver.Value(hedef))
+                    acil_dagitim_ozeti.append({"Hedef":ad,"Değer":deger,
+                        "En iyi sonuç kanıtlandı":acil_status==cp_model.OPTIMAL,
+                        "Kanıt kapsamı":acil_kapsami})
+                    model.Add(hedef == deger)
+                    if acil_status != cp_model.OPTIMAL: break
+                return solver, acil_dagitim_ozeti
+
             solver = None
             status = cp_model.UNKNOWN
             optimizasyon_ozeti = []
+            acil_dagitim_ozeti = []
             ilerleme = st.empty()
             for asama, (ad, hedef) in enumerate(hedefler, 1):
                 ilerleme.info(f"Dağıtım kontrolü {asama}/5: {ad}")
                 if asama == 5 and solver is not None:
+                    solver, acil_dagitim_ozeti = net_acil_dengele(solver)
                     # Üst önceliklerde seçilen 24s nöbet listesi tamamlandı.
                     # Küçük vardiya probleminde yalnızca 8s seçimlerini optimize et.
                     for var in x.values():
@@ -1984,10 +2076,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     "Fark / ceza": deger, "En iyi sonuç kanıtlandı": status == cp_model.OPTIMAL,
                     "Kanıt kapsamı":"Sabit 24s listeye bağlı" if asama==5 else "Önceki bulunan değerler korunarak"})
                 if status != cp_model.OPTIMAL:
-                    if asama == 1:
-                        st.warning(f"{ad}: geçerli liste bulundu, ancak süre içinde en küçük fark kanıtlanamadı. Saat önceliği nedeniyle alt hedeflere geçilmedi; arama süresini artırabilirsiniz.")
-                        break
-                    st.warning(f"{ad}: en küçük fark süre içinde kanıtlanamadı. Bulunan değer korunarak sonraki öncelik değerlendirilecek.")
+                    st.warning(f"{ad}: en küçük fark süre içinde kanıtlanamadı. Bulunan net/saat değeri korunarak adet, gün türü ve yayılım öncelikleri değerlendirilecek.")
                 # Önceki hedefin elde edilmiş değeri değiştirilemez.
                 model.Add(hedef == deger)
                 model.ClearHints()
@@ -1998,6 +2087,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     and asama < 5):
                 # Saat hedefinde süre dolsa bile mevcut normal nöbet listesini
                 # değiştirmeden küçük Kültür 8s problemini tamamla.
+                solver, acil_dagitim_ozeti = net_acil_dengele(solver)
                 ilerleme.info("Kültür 8s aylık tekrar / devir dengesi kontrol ediliyor")
                 for var in x.values():
                     model.Add(var == solver.Value(var))
@@ -2019,6 +2109,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         st.warning("Kültür 8s: geçerli dağıtım bulundu; en iyi denge süre içinde kanıtlanamadı.")
                 else:
                     st.warning("Kültür 8s dengelemesi süre içinde tamamlanamadı; önceki geçerli dağıtım korundu.")
+            if solver is not None and status in [cp_model.OPTIMAL, cp_model.FEASIBLE] and not acil_dagitim_ozeti:
+                solver, acil_dagitim_ozeti = net_acil_dengele(solver)
             ilerleme.empty()
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 nobet_dict = {p: set() for p in nobetci_personeller}
@@ -2030,11 +2122,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         if solver.Value(x[(p, d)]) == 1: nobet_dict[p].add(d + 1)
                         if p in kultur_nobetcileri and solver.Value(k8[(p, d)]) == 1: kultur_8s_dict[p].add(d + 1)
 
-                with st.spinner("Ortak havuzda acil nöbet dağılımı dengeleniyor..."):
-                    acil_nobet_dict, acil_dagitim_ozeti = dagit_acil_nobet(
-                        nobetci_personeller, nobet_dict, sabit_acil_nobetler,
-                        {d: gunluk_saatler[d - 1] for d in range(1, gun_sayisi + 1)},
-                        {p: int(get_prev_acil(p)) for p in nobetci_personeller}, cozum_arama_suresi)
+                acil_nobet_dict = {p:{d+1 for d in range(gun_sayisi)
+                                     if solver.Value(acil_model[(p,d)])} for p in nobetci_personeller}
 
                 liste_data = []
                 for d in range(1, gun_sayisi + 1):
@@ -2135,10 +2224,15 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     actual_net = sum(row[key] for key in [
                         "Normal Nöbet - Artırımlı (Gece)", "Normal Nöbet - Artırımsız (Normal)",
                         "Riskli Nöbet - Artırımlı (Gece)", "Riskli Nöbet - Artırımsız (Normal)"])
+                    actual_acil = row["Riskli Nöbet - Artırımlı (Gece)"] + row["Riskli Nöbet - Artırımsız (Normal)"]
+                    if actual_net != solver.Value(net_toplam[p]) or actual_acil != solver.Value(net_acil[p]):
+                        raise ValueError(f"{p}: dağıtım net normal/acil hakedişi ile puantaj uyuşmuyor; çıktı oluşturulmadı.")
                     counts = {tr_gunler[w]:sum(datetime.date(yil,ay,d).weekday()==w for d in nobet_dict[p])
                               for w in [4,5,6]}
                     denge_rows.append({"Personel":p,"Birim":TUM_PERSONEL_VERISI[p]["birim"],
                         "Brüt Saat":sum(gunluk_saatler[d-1] for d in nobet_dict[p]),"Net Hakediş":actual_net,
+                        "Uygulanan Mahsup":sum(gunluk_saatler[d-1] for d in nobet_dict[p])-actual_net,
+                        "Net Acil Hakediş":row["Riskli Nöbet - Artırımlı (Gece)"]+row["Riskli Nöbet - Artırımsız (Normal)"],
                         "Nöbet Sayısı":len(nobet_dict[p]),**counts,
                         "Cuma/Cmts/Pazar Ek Tekrar":sum(max(0,v-1) for v in counts.values())})
                 df_denge = pd.DataFrame(denge_rows)
@@ -2159,7 +2253,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 # Denetim kayıtları Excel'de kalıcıdır; üç görünür sekme korunur.
                 kontrol_wb = openpyxl.load_workbook(excel_bytes)
                 kontrol_ws = kontrol_wb.create_sheet("Dağıtım Kontrolü")
-                kontrol_ws.append(["Mod", "Önceki doğrulanmış dağıtım: brüt saat → adet → gün türü devir → yayılım; ayrı ortak havuz acil"])
+                kontrol_ws.append(["Mod", "Net hakediş → adet → gün türü devir → yayılım; ortak havuz net acil"])
                 kontrol_ws.append(list(df_denge.columns))
                 for values in df_denge.itertuples(index=False,name=None):
                     kontrol_ws.append(list(values))
@@ -2191,7 +2285,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 st.balloons()
                 st.success("Geçerli esnek nöbet listesi oluşturuldu.")
                 if len([r for r in optimizasyon_ozeti if r["Öncelik"]<5])==4 and all(r["En iyi sonuç kanıtlandı"] for r in optimizasyon_ozeti if r["Öncelik"]<5):
-                    st.info("İlk dört 24s dağıtım hedefinin öncelik sıralı optimumu kanıtlandı. Acil ve Kültür 8s aşamaları seçilen 24s listeye bağlıdır.")
+                    st.info("İlk dört 24s dağıtım hedefinin öncelik sıralı optimumu kanıtlandı. Acil hedefleri bu değerler korunarak değerlendirilir; Kültür 8s seçilen 24s listeye bağlıdır.")
                 else:
                     st.info("Tüm hedefler için en iyi denge kanıtlanmadı. Kanıtlanan hedefler aşağıda ayrı gösterilir.")
 
@@ -2234,11 +2328,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             st.warning("⚠️ Güncel değil — girdiler değişti. Aşağıdaki liste eski hesaptır; yeniden hesaplayın. Excel indirme kapatıldı.")
         if sonuc.get("optimizasyon_ozeti"):
             with st.expander("Dağıtım öncelikleri ve kontrol sonuçları"):
-                st.caption("Önceki dağıtım hedefleri: brüt saat, nöbet adedi, gün türü devir dengesi ve haftalara yayılım. Bir hedefin optimum olması tüm hedeflerin optimum olduğunu göstermez.")
+                st.caption("Dağıtım hedefleri: net hakediş saati, nöbet adedi, gün türü devir dengesi ve haftalara yayılım. Bir hedefin optimum olması tüm hedeflerin optimum olduğunu göstermez.")
                 st.dataframe(pd.DataFrame(sonuc["optimizasyon_ozeti"]), use_container_width=True)
         if sonuc.get("df_denge") is not None:
             with st.expander("Net hakediş ve esnek hafta sonu tekrarları",expanded=True):
-                st.caption("Dağıtım önceki yöntemle brüt saate göre yapılır. Net hakediş yalnız raporlanır. Katı kota yok.")
+                st.caption("Saat dengesi puantajdaki net hakedişe göre kurulur. Brüt saat ve uygulanan mahsup ayrıca gösterilir. Katı kota yok.")
                 st.dataframe(sonuc["df_denge"],use_container_width=True,hide_index=True)
             with st.expander("Liste sonrası günlük uygunluk"):
                 st.caption("Seçilmiş listedeki görevler korunursa oluşan engellerdir; başka bir listenin imkânsız olduğunu kanıtlamaz. Kültür 8s seçimleri bu aday hesabına dahil değildir.")
@@ -2246,7 +2340,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 st.dataframe(pd.DataFrame(sonuc["tani_detay"]),use_container_width=True,hide_index=True)
         if sonuc.get("acil_dagitim_ozeti"):
             with st.expander("Ortak havuz acil dağıtımı kontrol sonuçları"):
-                st.caption("Acil tüm seçili nöbetçi personelin ortak havuzunda dağıtılır: farklı personele görev → düşük devir → bu ay saat dengesi → birikimli saat dengesi. Birim kotası yoktur.")
+                st.caption("Acil tüm seçili nöbetçi personelin ortak havuzunda dağıtılır: farklı personele görev → düşük devir → bu ay net acil saat dengesi → birikimli saat dengesi. Net toplam hakediş dengesi korunur; birim kotası yoktur.")
                 st.dataframe(pd.DataFrame(sonuc["acil_dagitim_ozeti"]), use_container_width=True)
         file_name = f"Nobet_ve_Puantaj_Listesi_{sonuc['birim_secimi']}_{sonuc['yil']}_{sonuc['ay']}.xlsx"
         st.download_button(
