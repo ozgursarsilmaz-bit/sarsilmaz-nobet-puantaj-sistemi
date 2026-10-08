@@ -690,6 +690,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     otomatik_son_gun_normal = []
     otomatik_son_gun_acil = []
     otomatik_kultur_ni = []
+    gecmis_24s_kayitlari = []
+    gecmis_tarih_hatalari = []
+    gecmis_kapsanan_tarihler = set()
 
     if uploaded_file is not None:
         try:
@@ -734,6 +737,35 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             if "Aylık Görev Listesi" in xls.sheet_names:
                 df_goreg = pd.read_excel(xls, sheet_name="Aylık Görev Listesi", skiprows=2)
                 if not df_goreg.empty:
+                    if "Tarih" not in df_goreg.columns:
+                        gecmis_tarih_hatalari.append("Görev listesinde Tarih sütunu bulunamadı.")
+                    else:
+                        for _, gorev_row in df_goreg.iterrows():
+                            raw_date = gorev_row["Tarih"]
+                            if pd.isna(raw_date):
+                                continue
+                            try:
+                                if isinstance(raw_date, (int, float)):
+                                    raise ValueError("Sayısal tarih desteklenmiyor")
+                                gorev_tarihi = pd.to_datetime(raw_date, dayfirst=True, errors="raise").date()
+                            except (ValueError, TypeError, OverflowError):
+                                gecmis_tarih_hatalari.append(f"Geçersiz görev tarihi: {raw_date}")
+                                continue
+                            ay_baslangici = datetime.date(yil, ay, 1)
+                            if (gorev_tarihi.year, gorev_tarihi.month) != ((ay_baslangici - datetime.timedelta(days=1)).year, (ay_baslangici - datetime.timedelta(days=1)).month):
+                                gecmis_tarih_hatalari.append(f"Önceki döneme ait olmayan tarih: {gorev_tarihi}")
+                                continue
+                            gecmis_kapsanan_tarihler.add(gorev_tarihi)
+                            for birim_col in ["PCR", "Mikro", "Kültür"]:
+                                if birim_col not in df_goreg.columns or pd.isna(gorev_row[birim_col]):
+                                    continue
+                                for raw_name in str(gorev_row[birim_col]).split(","):
+                                    clean_name = raw_name.replace("(Acil)", "").strip().upper()
+                                    matches = [p for p in nobetci_personeller if tr_norm(p) == tr_norm(clean_name)]
+                                    if len(matches) == 1:
+                                        gecmis_24s_kayitlari.append((matches[0], gorev_tarihi, "Acil" if "(Acil)" in raw_name else "Normal"))
+                                    elif len(matches) > 1:
+                                        gecmis_tarih_hatalari.append(f"Belirsiz personel: {clean_name}")
                     last_row = df_goreg.iloc[-1]
                     for col_name in ["PCR", "Mikro", "Kültür"]:
                         if col_name in df_goreg.columns and pd.notna(last_row[col_name]):
@@ -761,6 +793,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             gecmis_ay_alani.success(f"✅ {len(gecmis_istatistik)} personelin devir verileri aktarıldı!")
         except Exception as e:
             gecmis_ay_alani.error(f"❌ Hata: Yüklenen Excel okunurken sorun oluştu ({e}).")
+
+    if gecmis_kapsanan_tarihler:
+        onceki_son = datetime.date(yil, ay, 1) - datetime.timedelta(days=1)
+        otomatik_son_gun_normal = [p for p, dt, tur in gecmis_24s_kayitlari if dt == onceki_son and tur == "Normal"]
+        otomatik_son_gun_acil = [p for p, dt, tur in gecmis_24s_kayitlari if dt == onceki_son and tur == "Acil"]
 
     gecmis_ay_son_gun_normal = gecmis_ay_alani.multiselect(
         "🌙 Geçmiş Ay Son Günü NORMAL Nöbetçileri:",
@@ -870,6 +907,46 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         if p_ana != "Seçiniz..." and p_yasakli_list:
             kisi_kisitlari.append({"ana": p_ana, "aralik": min_aralik, "yasaklilar": p_yasakli_list})
     st.button("➕ Yeni Kısıt Ekle", on_click=satir_ekle, args=("kisi_kisit",))
+
+    # Tarih bazlı geçmiş yalnız 24s normal/acil görevleri içerir; Kültür 8s hariç.
+    ay_baslangici = datetime.date(yil, ay, 1)
+    gecmis_son_tarih = ay_baslangici - datetime.timedelta(days=1)
+    gecmis_pencere = max(3, max(1, int(dinlenme_gun_sayisi)),
+                         max((int(r["aralik"]) for r in kisi_kisitlari), default=0))
+    gerekli_gecmis_tarihler = {ay_baslangici - datetime.timedelta(days=i)
+                              for i in range(1, gecmis_pencere + 1)}
+    with st.expander("📅 Önceki dönem 24s görevleri — tarih bazlı dinlenme"):
+        st.caption(f"{min(gerekli_gecmis_tarihler):%d.%m.%Y}–{gecmis_son_tarih:%d.%m.%Y}. Kültür 8s kayıtlarını buraya girmeyin.")
+        manuel_gecmis = st.text_area("Eksik geçmiş görevler (her satır: GG.AA.YYYY;PERSONEL;Normal veya Acil)",
+                                     key="gecmis_24s_tarihli_giris")
+        for line in manuel_gecmis.splitlines():
+            if not line.strip():
+                continue
+            try:
+                date_text, name_text, tur = [v.strip() for v in line.split(";")]
+                dt = datetime.datetime.strptime(date_text, "%d.%m.%Y").date()
+                matches = [p for p in nobetci_personeller if tr_norm(p) == tr_norm(name_text)]
+                if len(matches) != 1 or tur not in ("Normal", "Acil") or dt not in gerekli_gecmis_tarihler:
+                    raise ValueError("Personel, görev türü veya tarih geçersiz")
+                gecmis_24s_kayitlari.append((matches[0], dt, tur))
+            except ValueError:
+                gecmis_tarih_hatalari.append(f"Geçersiz geçmiş görev satırı: {line}")
+        # Mevcut son gün alanları puantaj/Nİ için korunur; tarih kontrolüne de alınır.
+        for p in gecmis_ay_son_gun_normal:
+            gecmis_24s_kayitlari.append((p, gecmis_son_tarih, "Normal"))
+        for p in gecmis_ay_son_gun_acil:
+            gecmis_24s_kayitlari.append((p, gecmis_son_tarih, "Acil"))
+        gecmis_24s_kayitlari = sorted(set(gecmis_24s_kayitlari))
+        if gecmis_24s_kayitlari:
+            st.dataframe(pd.DataFrame(gecmis_24s_kayitlari, columns=["Personel", "Tarih", "Görev Türü"]), hide_index=True)
+        gecmis_eksik = gerekli_gecmis_tarihler - gecmis_kapsanan_tarihler
+        gecmis_tam_onay = False
+        if gecmis_eksik:
+            st.warning("Geçmiş tarih kapsamı eksik. Eksik görevleri yukarıya girin; kayıt olmayan günleri kontrol edin. Eksik geçmişle aylar arası kontrol doğrulanamaz.")
+            gecmis_tam_onay = st.checkbox("Gerekli aralıktaki tüm 24s görevleri kontrol ettim; kayıt olmayan günlerde ilgili personelin görevi yok.",
+                                         key="gecmis_24s_kapsam_onayi")
+        for mesaj in gecmis_tarih_hatalari:
+            st.error(mesaj)
 
     def is_day_off(yil, ay, day, resmi_tatil_gunleri):
         dt = datetime.date(yil, ay, day)
@@ -1321,7 +1398,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     # HESAPLAMA BUTONU
     if st.button("🚀 Otomatik ve Adil Nöbet Listesini Oluştur"):
         st.session_state.hesaplanan_sonuc = None
-        hata_listesi = []
+        hata_listesi = list(gecmis_tarih_hatalari)
+        if gecmis_eksik and not gecmis_tam_onay:
+            hata_listesi.append("Önceki dönem 24s görev kapsamı eksik; geçmiş kayıtları tamamlayıp kapsamı doğrulayın.")
         pcr_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "PCR"]
         mikro_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "Mikro"]
         kultur_nobetcileri = [p for p in nobetci_personeller if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == "Kültür"]
@@ -1424,6 +1503,30 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 if p in nobetci_personeller:
                     zorunlu_kisit(x[(p, 0)] == 0, f"{p} — {tarih(0)}: önceki ay son gün nöbeti sonrası dinlenme")
                     if p in kultur_nobetcileri: zorunlu_kisit(k8[(p, 0)] == 0, f"{p} — {tarih(0)}: önceki ay son gün nöbeti sonrası vardiya verilemez")
+
+            # Ay sınırında aynı tarih motoruyla yalnız 24s görevleri denetle.
+            for p, onceki_tarih, gorev_turu in gecmis_24s_kayitlari:
+                if p not in nobetci_personeller:
+                    continue
+                p_dinlenme_gecmis = 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
+                for d in range(gun_sayisi):
+                    aday_tarih = datetime.date(yil, ay, d + 1)
+                    fark = (aday_tarih - onceki_tarih).days
+                    if 0 < fark <= p_dinlenme_gecmis:
+                        zorunlu_kisit(x[(p, d)] == 0,
+                            f"{p} — {onceki_tarih:%d.%m.%Y} {gorev_turu} / {aday_tarih:%d.%m.%Y}: en az {p_dinlenme_gecmis} tam gün dinlenme")
+                    if (persembe_pazar_yasagi and p not in esnek_personel
+                            and onceki_tarih.weekday() == 3 and fark == 3):
+                        zorunlu_kisit(x[(p, d)] == 0,
+                            f"{p} — {onceki_tarih:%d.%m.%Y} / {aday_tarih:%d.%m.%Y}: aylar arası Perşembe–Pazar yasağı")
+                    for rule in kisi_kisitlari:
+                        digerleri = (rule["yasaklilar"] if p == rule["ana"]
+                                     else [rule["ana"]] if p in rule["yasaklilar"] else [])
+                        if abs(fark) <= int(rule["aralik"]):
+                            for diger in digerleri:
+                                if diger in nobetci_personeller:
+                                    zorunlu_kisit(x[(diger, d)] == 0,
+                                        f"{p} ({onceki_tarih:%d.%m.%Y}) / {diger} ({aday_tarih:%d.%m.%Y}): aylar arası 24s mesafe {rule['aralik']} gün")
 
             for p in nobetci_personeller:
                 p_dinlenme = 1 if p in esnek_personel else max(1, int(dinlenme_gun_sayisi))
