@@ -5,7 +5,7 @@ import datetime
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, column_index_from_string
 from ortools.sat.python import cp_model
 import pandas as pd
 import streamlit as st
@@ -68,6 +68,13 @@ def doktor_puantaj_olustur(records, yil, ay, tam_tatil=(), yarim_tatil=(),
     if ws.max_column>=48:
         ws['AV7'],ws['AV8'] = yil,ay
     for col in ['AU','AV','AW']: ws.column_dimensions[col].hidden=True
+    for key, dim in list(ws.column_dimensions.items()):
+        lo = dim.min or column_index_from_string(key)
+        hi = dim.max or lo
+        if lo <= 35 and hi >= 5:
+            del ws.column_dimensions[key]
+    for d in range(1,32):
+        ws.column_dimensions[get_column_letter(d+4)].width = 3.5
     for d in range(1,32):
         ws.cell(7,d+4).value = d if d<=n else None
         ws.column_dimensions[get_column_letter(d+4)].hidden = d > n
@@ -118,8 +125,8 @@ def doktor_puantaj_olustur(records, yil, ay, tam_tatil=(), yarim_tatil=(),
                     gn,nn=(8,3) if dt.weekday()<4 and ortak_gun_statusu(nxt,yil,ay,full,half)==5 else (12,4)
                 elif dt.weekday()<4: gn,nn=8,(3 if ortak_gun_statusu(nxt,yil,ay,full,half)==5 and not next_off else 0)
                 else: gn,nn=12,4
-                if d in full or d in half: holiday_night+=gn; holiday_normal+=nn
-                else: night+=gn; normal+=nn
+                gn,nn,bgn,bnn=bayram_saat_ayrimi(yil,ay,d,gn,nn,full,half)
+                night+=gn; normal+=nn; holiday_night+=bgn; holiday_normal+=bnn
             elif d in ni: cell.value='Nİ'
             else:
                 cell.value=base(d) or 'T'; total+=base(d)
@@ -205,6 +212,55 @@ def kultur8_denge_hedefi(model, k8, personeller, gunler, devirler):
     # Üst sınır bir yasak değildir; kısıtlar gerektirirse tekrar mümkündür.
     agirlik = len(personeller)*ust*ust+1
     return agirlik*sum(tekrarlar)+sum(kareler)
+
+def bayram_saat_ayrimi(yil, ay, day, gece, normal, tam_tatil=(), yarim_tatil=()):
+    """Mevcut hakediş toplamını değiştirmeden 08–08 nöbetini tarihle ayırır.
+
+    Tam tatilde 16s hakediş 08–24 aralığıdır; Nİ için ikinci düşüş yoktur.
+    Arifede mesai 08–13 (5s), bayram 13'te başlar. Bayramsız görevlerin
+    eski gece/gündüz ayrımı aynen korunur.
+    """
+    full, half = set(tam_tatil), set(yarim_tatil)
+    dt = datetime.datetime(yil, ay, day, 8)
+    end = dt + datetime.timedelta(days=1)
+    total = gece + normal
+    def holiday(t):
+        d = t.date()
+        if (d.year,d.month) == (yil,ay):
+            return d.day in full or (d.day in half and t.hour >= 13)
+        saved = st.session_state.get("ortak_takvim_secimleri", {}).get(f"{d.year:04d}-{d.month:02d}")
+        if saved is not None:
+            return d.day in saved["full"] or (d.day in saved["half"] and t.hour >= 13)
+        return (d.month,d.day) in {(1,1),(4,23),(5,1),(5,19),(7,15),(8,30),(10,29)} or ((d.month,d.day)==(10,28) and t.hour>=13)
+    if not any(holiday(dt+datetime.timedelta(hours=h)) for h in range(24)):
+        return gece, normal, 0, 0
+    if day in full:
+        start = dt
+        end = start + datetime.timedelta(hours=total)
+    elif day in half:
+        start = dt.replace(hour=13)
+        end = start + datetime.timedelta(hours=total)
+    else:
+        start = end - datetime.timedelta(hours=total)
+    parts = [0,0,0,0]  # sıradan gece/gündüz, bayram gece/gündüz
+    for h in range(total):
+        t = start + datetime.timedelta(hours=h)
+        night = t.hour >= 20 or t.hour < 8
+        parts[(2 if holiday(t) else 0) + (0 if night else 1)] += 1
+    if sum(parts) != total:
+        raise ValueError("Bayram saat ayrımı toplam hakedişi değiştirdi.")
+    return tuple(parts)
+
+
+def bayramli_personel_mahsup(gece, normal, bayram_gece, bayram_normal, saat):
+    """Aynı normal/acil kategorisindeki mevcut 4+4 mahsup kuralı."""
+    new_g, new_n, kalan = ortak_mahsup(gece+bayram_gece, normal+bayram_normal, saat)
+    drop_g = gece+bayram_gece-new_g
+    drop_n = normal+bayram_normal-new_n
+    normal_drop_g, normal_drop_n = min(gece,drop_g), min(normal,drop_n)
+    return (gece-normal_drop_g, normal-normal_drop_n,
+            bayram_gece-(drop_g-normal_drop_g), bayram_normal-(drop_n-normal_drop_n), kalan)
+
 
 def cuma_cumartesi_pazar_siniri(x, personeller, yil, ay, gun_sayisi, kisit_ekle):
     """24s nöbetlerde kişi başına ayda en fazla 1 Cuma, 1 Cumartesi, 1 Pazar."""
@@ -1252,6 +1308,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         norm_normal = 0
         risk_gece = 0
         risk_normal = 0
+        bayram_gece = bayram_normal = risk_bayram_gece = risk_bayram_normal = 0
 
         # 1. Ham Nöbet Saatlerinin Dağıtılması
         for d in range(1, gun_sayisi + 1):
@@ -1272,12 +1329,18 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 g_saat, n_saat = calculate_nobet_hakedis(
                     yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
 
+                g_saat, n_saat, bg_saat, bn_saat = bayram_saat_ayrimi(
+                    yil,ay,d,g_saat,n_saat,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
                 if is_risk:
                     risk_gece += g_saat
                     risk_normal += n_saat
+                    risk_bayram_gece += bg_saat
+                    risk_bayram_normal += bn_saat
                 else:
                     norm_gece += g_saat
                     norm_normal += n_saat
+                    bayram_gece += bg_saat
+                    bayram_normal += bn_saat
 
         # Kültür 8s karşılığı Nİ sonraki aya kalıyorsa, bu 8s mevcut
         # ayın ödeme hesabına girmez. Günlük hücrede 8 olarak kalır.
@@ -1307,12 +1370,12 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             dusulecek_saat = 5 if 1 in yarim_gun_tatil_gunleri else 8
             if is_devir_acil:
                 # Acil devir yalnız riskli hakedişten düşülür.
-                risk_gece, risk_normal, dusulecek_saat = ortak_mahsup(
-                    risk_gece, risk_normal, dusulecek_saat)
+                risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
+                    risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat)
             else:
                 # Normal devir yalnız normal hakedişten düşülür.
-                norm_gece, norm_normal, dusulecek_saat = ortak_mahsup(
-                    norm_gece, norm_normal, dusulecek_saat)
+                norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
+                    norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat)
 
         fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
 
@@ -1324,6 +1387,8 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             "Normal_Normal": norm_normal,
             "Riskli_Gece": risk_gece,
             "Riskli_Normal": risk_normal,
+            "Bayram_Gece": bayram_gece, "Bayram_Normal": bayram_normal,
+            "Riskli_Bayram_Gece": risk_bayram_gece, "Riskli_Bayram_Normal": risk_bayram_normal,
         }
 
     def ortak_personel_gunluk_kayit(p, yil, ay, gun_sayisi, nobet_dict, kultur_8s_dict,
@@ -1521,38 +1586,42 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         # 3. SEKME
         ws3 = wb.create_sheet("Puantaj Tablosu")
         ws3.views.sheetView[0].showGridLines = True
-        ws3.row_dimensions[5].height = 110
-
-        ws3.cell(row=5, column=1, value="Adı Soyadı").fill = fill_white
-        ws3.cell(row=5, column=1).font, ws3.cell(row=5, column=1).alignment, ws3.cell(row=5, column=1).border = font_header, align_left, border_cell
-
-        ws3.cell(row=5, column=2, value="Birim").fill = fill_white
-        ws3.cell(row=5, column=2).font, ws3.cell(row=5, column=2).alignment, ws3.cell(row=5, column=2).border = font_header, align_center, border_cell
-
-        off_days = set()
-        for day in range(1, gun_sayisi + 1):
-            col_idx = day + 2
-            if is_day_off(yil, ay, day, resmi_tatil_gunleri): off_days.add(day)
-            cell = ws3.cell(row=5, column=col_idx, value=int(day))
-            cell.font, cell.alignment, cell.border = font_header, align_center, border_cell
-            cell.fill = fill_grey_weekend if day in off_days else fill_white
-
-        ek_basliklar = [
-            "Toplam çalışma saati", "Aylık Çalışma Saati", "Fazla nöbet saati",
-            "Normal Nöbet - Artırımlı (Gece)", "Normal Nöbet - Artırımsız (Normal)",
-            "Riskli Nöbet - Artırımlı (Gece)", "Riskli Nöbet - Artırımsız (Normal)",
-        ]
-
+        ws3.row_dimensions[7].height = 48.75
+        ws3.row_dimensions[8].height = 60.75
+        header_font = Font(name="Times New Roman",size=12,bold=True)
+        sub_font = Font(name="Times New Roman",size=10)
+        header_align = Alignment(horizontal="center",vertical="center",wrap_text=True)
+        sub_align = Alignment(horizontal="center",vertical="center",text_rotation=90,wrap_text=True)
+        off_days = {d for d in range(1,gun_sayisi+1) if is_day_off(yil,ay,d,resmi_tatil_gunleri)}
+        ek_basliklar = ["Toplam çalışma saati","Aylık Çalışma Saati","Fazla nöbet saati",
+                       "Normal Nöbet - Artırımlı (Gece)","Normal Nöbet - Artırımsız (Normal)",
+                       "Riskli Nöbet - Artırımlı (Gece)","Riskli Nöbet - Artırımsız (Normal)",
+                       "Bayram Nöbet - Artırımlı (Gece)","Bayram Nöbet - Artırımsız (Normal)",
+                       "Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"]
         start_col = gun_sayisi + 3
-        for idx, b_adi in enumerate(ek_basliklar):
-            c_i = start_col + idx
-            cell = ws3.cell(row=5, column=c_i, value=b_adi)
-            cell.font, cell.fill, cell.alignment, cell.border = font_header, fill_green_bg, align_vertical_header, border_cell
+        singles = [(1,"ADI SOYADI"),(2,"Branş")]+[(d+2,d) for d in range(1,gun_sayisi+1)]
+        singles += [(start_col+i,ek_basliklar[i]) for i in range(3)]
+        for c,value in singles:
+            ws3.merge_cells(start_row=7,start_column=c,end_row=8,end_column=c)
+            cell=ws3.cell(7,c,value)
+            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
+            cell.fill=fill_grey_weekend if c-2 in off_days and 3<=c<start_col else fill_white
+            ws3.cell(8,c).border=border_cell
+        for offset,label in [(3,"Normal Nöbet Saati"),(5,"Riskli nöbet saati"),
+                             (7,"Bayram Nöbet Saati"),(9,"Riskli bayram nöbet saati")]:
+            c=start_col+offset
+            ws3.merge_cells(start_row=7,start_column=c,end_row=7,end_column=c+1)
+            cell=ws3.cell(7,c,label)
+            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
+            ws3.cell(7,c+1).border=border_cell
+            for j,label2 in enumerate(["Artırımlı\n(Gece)","Artırımsız\n(Normal)"]):
+                cell=ws3.cell(8,c+j,label2)
+                cell.font,cell.alignment,cell.border=sub_font,sub_align,border_cell
 
         gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
 
         for idx, p in enumerate(tum_girilen_personeller):
-            r = 6 + idx
+            r = 9 + idx
             ws3.row_dimensions[r].height = 18
             p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
             is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
@@ -1593,6 +1662,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             metrik_values = [
                 int(m["Toplam Çalışma Saati"]), int(m["Aylık Çalışma Saati"]), int(m["Fazla Nöbet Saati"]),
                 int(m["Normal_Gece"]), int(m["Normal_Normal"]), int(m["Riskli_Gece"]), int(m["Riskli_Normal"]),
+                int(m["Bayram_Gece"]),int(m["Bayram_Normal"]),int(m["Riskli_Bayram_Gece"]),int(m["Riskli_Bayram_Normal"]),
             ]
 
             for m_idx, val in enumerate(metrik_values):
@@ -1600,8 +1670,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 cell = ws3.cell(row=r, column=col_idx, value=val)
                 cell.font = font_bold if m_idx < 3 else font_body
                 cell.alignment, cell.border = align_center, border_cell
+                cell.fill = PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
 
-        summary_r = 6 + len(tum_girilen_personeller)
+        summary_r = 9 + len(tum_girilen_personeller)
         ws3.row_dimensions[summary_r].height = 20
 
         c_sum_name = ws3.cell(row=summary_r, column=1, value="Hesaplanan Nöbet Saati")
@@ -1617,18 +1688,17 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
         for m_idx in range(len(ek_basliklar)):
             c_i = start_col + m_idx
-            cell = ws3.cell(row=summary_r, column=c_i, value="")
-            cell.fill, cell.border = fill_green_bg, border_cell
-
-        ws3.column_dimensions["A"].width = 28
-        ws3.column_dimensions["B"].width = 12
-        for day in range(1, gun_sayisi + 1):
-            col_letter = get_column_letter(day + 2)
-            ws3.column_dimensions[col_letter].width = 4.5
-
-        for m_idx in range(len(ek_basliklar)):
-            col_letter = get_column_letter(start_col + m_idx)
-            ws3.column_dimensions[col_letter].width = 6.5
+            letter=get_column_letter(c_i)
+            formula=f"=SUM({letter}9:{letter}{summary_r-1})" if tum_girilen_personeller else "=0"
+            cell=ws3.cell(summary_r,c_i,formula)
+            cell.font,cell.alignment,cell.border=font_bold,align_center,border_cell
+            cell.fill=PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
+        ws3.column_dimensions["A"].width=23.140625
+        ws3.column_dimensions["B"].width=5.5703125
+        for d in range(1,gun_sayisi+1):
+            ws3.column_dimensions[get_column_letter(d+2)].width = (2.7109375 if d<=2 or 5<=d<=9 else 3.42578125 if d<=4 else 3.85546875)
+        for idx,width in enumerate([9.5703125,10.28515625]+[7.28515625]*9):
+            ws3.column_dimensions[get_column_letter(start_col+idx)].width=width
 
         ws_devir = wb.create_sheet("Kültür Nİ Devir")
         ws_devir.append(["Personel"])
@@ -1639,6 +1709,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
         ws_meta = wb.create_sheet("Sistem Metadata")
         ws_meta.append(["Şema Sürümü", 2])
+        ws_meta.append(["Puantaj Görünüm Sürümü", 3])
         ws_meta.append(["Dönem", f"{yil:04d}-{ay:02d}"])
         ws_meta.sheet_state = "hidden"
         ws_ids = wb.create_sheet("Personel Kimlikleri")
@@ -1662,7 +1733,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         "k8": kultur_8s_tatil_gunleri, "ihtiyac": gunluk_nobetci,
         "dinlenme": dinlenme_gun_sayisi, "esnek": esnek_personel,
         "persembe": persembe_pazar_yasagi, "haftasonu": cuma_haftasonu_siki_kural,
-        "dagitim_politikasi": "cuma_cumartesi_pazar_max1_brut_v4",
+        "dagitim_politikasi": "cuma_cumartesi_pazar_max1_brut_v4", "puantaj_gorunum_surumu": 3,
         "sure": cozum_arama_suresi, "izinler": izinler,
         "sabit": sabit_nobetler, "acil": sabit_acil_nobetler, "mesafeler": kisi_kisitlari,
         "gecmis": gecmis_24s_kayitlari, "normal_son": gecmis_ay_son_gun_normal,
@@ -2123,6 +2194,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     p_row["Normal Nöbet - Artırımsız (Normal)"] = m["Normal_Normal"]
                     p_row["Riskli Nöbet - Artırımlı (Gece)"] = m["Riskli_Gece"]
                     p_row["Riskli Nöbet - Artırımsız (Normal)"] = m["Riskli_Normal"]
+                    p_row["Bayram Nöbet - Artırımlı (Gece)"] = m["Bayram_Gece"]
+                    p_row["Bayram Nöbet - Artırımsız (Normal)"] = m["Bayram_Normal"]
+                    p_row["Riskli Bayram Nöbet - Artırımlı (Gece)"] = m["Riskli_Bayram_Gece"]
+                    p_row["Riskli Bayram Nöbet - Artırımsız (Normal)"] = m["Riskli_Bayram_Normal"]
                     puantaj_rows.append(p_row)
 
                 denge_rows = []
@@ -2131,7 +2206,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         continue
                     actual_net = sum(row[key] for key in [
                         "Normal Nöbet - Artırımlı (Gece)", "Normal Nöbet - Artırımsız (Normal)",
-                        "Riskli Nöbet - Artırımlı (Gece)", "Riskli Nöbet - Artırımsız (Normal)"])
+                        "Riskli Nöbet - Artırımlı (Gece)", "Riskli Nöbet - Artırımsız (Normal)",
+                        "Bayram Nöbet - Artırımlı (Gece)","Bayram Nöbet - Artırımsız (Normal)",
+                        "Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"])
                     counts = {tr_gunler[w]:sum(datetime.date(yil,ay,d).weekday()==w for d in nobet_dict[p])
                               for w in [4,5,6]}
                     if any(v > 1 for v in counts.values()):
@@ -2139,7 +2216,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     denge_rows.append({"Personel":p,"Birim":TUM_PERSONEL_VERISI[p]["birim"],
                         "Brüt Saat":sum(gunluk_saatler[d-1] for d in nobet_dict[p]),"Net Hakediş":actual_net,
                         "Uygulanan Mahsup":sum(gunluk_saatler[d-1] for d in nobet_dict[p])-actual_net,
-                        "Net Acil Hakediş":row["Riskli Nöbet - Artırımlı (Gece)"]+row["Riskli Nöbet - Artırımsız (Normal)"],
+                        "Net Acil Hakediş":sum(row[key] for key in ["Riskli Nöbet - Artırımlı (Gece)","Riskli Nöbet - Artırımsız (Normal)","Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"]),
                         "Nöbet Sayısı":len(nobet_dict[p]),**counts,
                         "Cuma/Cmts/Pazar Ek Tekrar":sum(max(0,v-1) for v in counts.values())})
                 df_denge = pd.DataFrame(denge_rows)
