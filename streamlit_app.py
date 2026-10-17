@@ -262,9 +262,12 @@ def bayramli_personel_mahsup(gece, normal, bayram_gece, bayram_normal, saat):
             bayram_gece-(drop_g-normal_drop_g), bayram_normal-(drop_n-normal_drop_n), kalan)
 
 
-def cuma_cumartesi_pazar_siniri(x, personeller, yil, ay, gun_sayisi, kisit_ekle):
-    """24s nöbetlerde kişi başına ayda en fazla 1 Cuma, 1 Cumartesi, 1 Pazar."""
+def cuma_cumartesi_pazar_siniri(x, personeller, yil, ay, gun_sayisi, kisit_ekle, esnek_personel=()):
+    """Esnek personel hariç ayda en fazla 1 Cuma, 1 Cumartesi, 1 Pazar."""
+    esnekler = set(esnek_personel)
     for p in personeller:
+        if p in esnekler:
+            continue
         for weekday, ad in [(4,"Cuma"),(5,"Cumartesi"),(6,"Pazar")]:
             gunler = [d for d in range(gun_sayisi)
                       if datetime.date(yil,ay,d+1).weekday() == weekday]
@@ -769,12 +772,130 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         unsafe_allow_html=True,
     )
 
+    # Yedek yalnız giriş alanlarını içerir; oturum/parola ve sonuçlar dışarıda kalır.
+    import json as ayar_json
+    import base64 as ayar_base64
+    import io as ayar_io
+    import re as ayar_re
+
+    AYAR_SABIT_ANAHTARLAR = {
+        "ayar_yil", "ayar_ay", "ayar_birim", "ayar_personel", "ayar_ihtiyac",
+        "ayar_dinlenme", "ayar_persembe", "ayar_sure", "ayar_esnek", "ayar_k8",
+        "ayar_son_normal", "ayar_son_acil", "ayar_kultur_ni",
+        "personel_kayitlari", "ortak_tarih_takvimi", "ortak_takvim_donemleri",
+        "ortak_takvim_secimleri", "gecmis_24s_tarihli_giris", "gecmis_24s_kapsam_onayi",
+        "mazeret_satir_ids", "mazeret_satir_next", "acil_satir_ids", "acil_satir_next",
+        "kisi_kisit_ids", "kisi_kisit_next",
+    }
+    def ayar_anahtari(k):
+        return k in AYAR_SABIT_ANAHTARLAR or bool(ayar_re.fullmatch(
+            r"(?:m_personel|m_leave|m_forced|a_personel|a_forced|p_ana|min_aralik|p_yasakli)_\d+|ortak_(?:full|half|next)_\d{4}_\d{1,2}|(?:birim|muaf)_.+", k))
+
+    def ayar_yedegini_dogrula(raw):
+        if len(raw) > 30 * 1024 * 1024:
+            raise ValueError("Yedek dosyası 30 MB sınırını aşıyor.")
+        data = ayar_json.loads(raw)
+        if not isinstance(data, dict) or data.get("format") != "nobet-sistemi-ayarlar" or data.get("surum") != 1:
+            raise ValueError("Desteklenmeyen ayar dosyası.")
+        state = data.get("girdiler")
+        if not isinstance(state, dict) or not all(isinstance(k, str) and ayar_anahtari(k) for k in state):
+            raise ValueError("Dosyada tanınmayan giriş alanı var.")
+        for key, lo, hi in [("ayar_yil",2024,2030),("ayar_ay",1,12),("ayar_ihtiyac",1,10),("ayar_dinlenme",0,10),("ayar_sure",5,120)]:
+            v = state.get(key)
+            if type(v) is not int or not lo <= v <= hi:
+                raise ValueError(f"Geçersiz sayı: {key}")
+        n = calendar.monthrange(state["ayar_yil"], state["ayar_ay"])[1]
+        if state.get("ayar_birim") not in ("Mikro","PCR","Kültür","Tüm Laboratuvar (Birleşik)") or not isinstance(state.get("ayar_personel"),str):
+            raise ValueError("Birim/personel listesi geçersiz.")
+        registry = data.get("personel")
+        if not isinstance(registry,dict) or not registry:
+            raise ValueError("Personel kayıtları eksik.")
+        import uuid as ayar_uuid
+        ids = set()
+        for name, info in registry.items():
+            if not isinstance(name,str) or not name or not isinstance(info,dict) or info.get("birim") not in ("Mikro","PCR","Kültür") or type(info.get("muaf")) is not bool:
+                raise ValueError("Geçersiz personel kaydı.")
+            pid = str(ayar_uuid.UUID(info["id"]))
+            if pid in ids: raise ValueError("Tekrarlanan personel kimliği.")
+            ids.add(pid)
+        people = set(registry)
+        for k,v in state.items():
+            if k in ("ayar_esnek","ayar_son_normal","ayar_son_acil","ayar_kultur_ni") or ayar_re.fullmatch(r"p_yasakli_\d+",k):
+                if not isinstance(v,list) or any(p not in people for p in v): raise ValueError(f"Geçersiz personel seçimi: {k}")
+            if ayar_re.fullmatch(r"(?:m_personel|a_personel|p_ana)_\d+",k):
+                if v != "Seçiniz..." and v not in people: raise ValueError(f"Geçersiz personel: {k}")
+            if k == "ayar_k8" or ayar_re.fullmatch(r"(?:m_leave|m_forced|a_forced)_\d+",k):
+                if not isinstance(v,list) or any(type(d) is not int or not 1<=d<=n for d in v): raise ValueError(f"Geçersiz gün: {k}")
+            if k.endswith("_ids"):
+                if not isinstance(v,list) or len(v)>1000 or any(type(i) is not int or i<0 for i in v) or len(v)!=len(set(v)): raise ValueError("Geçersiz satır kimlikleri.")
+            if k.endswith("_next") and k in AYAR_SABIT_ANAHTARLAR:
+                if type(v) is not int or v<0: raise ValueError("Geçersiz satır sayacı.")
+            if ayar_re.fullmatch(r"min_aralik_\d+",k) and (type(v) is not int or not 0<=v<=15): raise ValueError("Geçersiz mesafe.")
+        for k in ("ayar_persembe","gecmis_24s_kapsam_onayi"):
+            if k in state and type(state[k]) is not bool: raise ValueError("Geçersiz onay alanı.")
+        for group, fields in [("mazeret_satir", ("m_personel", "m_leave", "m_forced")),
+                              ("acil_satir", ("a_personel", "a_forced")),
+                              ("kisi_kisit", ("p_ana", "min_aralik", "p_yasakli"))]:
+            rows = state.get(group + "_ids")
+            if not isinstance(rows, list) or state.get(group + "_next", -1) <= max(rows, default=-1):
+                raise ValueError("Eksik veya geçersiz giriş satırları.")
+            if any(f"{field}_{i}" not in state for i in rows for field in fields):
+                raise ValueError("Yedekte giriş satırının bir alanı eksik.")
+        for k,v in state.items():
+            match = ayar_re.fullmatch(r"ortak_(full|half|next)_(\d{4})_(\d{1,2})", k)
+            if match:
+                month_days = calendar.monthrange(int(match[2]), int(match[3]))[1]
+                if match[1] == "next":
+                    if v not in ("Tam mesai (8s)", "Yarım mesai (5s)", "Tatil (0s)"):
+                        raise ValueError("Geçersiz ay geçişi takvimi.")
+                elif not isinstance(v,list) or any(type(d) is not int or not 1<=d<=month_days for d in v):
+                    raise ValueError("Geçersiz tatil günü.")
+        if set(state.get("ayar_son_normal",[])) & set(state.get("ayar_son_acil",[])):
+            raise ValueError("Önceki ay normal/acil seçimi çakışıyor.")
+        if not isinstance(state.get("gecmis_24s_tarihli_giris", ""), str):
+            raise ValueError("Geçmiş görev metni geçersiz.")
+        for k in ("ortak_tarih_takvimi", "ortak_takvim_secimleri"):
+            if k in state and not isinstance(state[k],dict): raise ValueError("Geçersiz takvim kaydı.")
+        if "ortak_takvim_donemleri" in state and not isinstance(state["ortak_takvim_donemleri"],list):
+            raise ValueError("Geçersiz takvim dönemleri.")
+        excel = data.get("onceki_ay_excel")
+        if excel is not None:
+            if not isinstance(excel,dict) or not isinstance(excel.get("ad"),str): raise ValueError("Geçersiz Excel kaydı.")
+            content = ayar_base64.b64decode(excel["icerik"], validate=True)
+            pd.ExcelFile(ayar_io.BytesIO(content))  # Yüklemeden önce okunabilirliği denetle.
+        return data
+
+    def ayarlari_ice_aktar():
+        try:
+            f = st.session_state.get("ayar_yukleme")
+            if f is None: raise ValueError("Önce ayar dosyasını seçiniz.")
+            data = ayar_yedegini_dogrula(f.getvalue())
+            for k in list(st.session_state):
+                if ayar_anahtari(k): del st.session_state[k]
+            st.session_state.update(data["girdiler"])
+            st.session_state["personel_kayitlari"] = data["personel"]
+            st.session_state["ayar_excel_yedek"] = data.get("onceki_ay_excel")
+            st.session_state.pop("ayar_onceki_excel", None)
+            st.session_state["hesaplanan_sonuc"] = None
+            st.session_state["ayar_mesaj"] = (True, "Ayarlar yüklendi. Dönemi ve girişleri kontrol edip listeyi yeniden oluşturabilirsiniz.")
+        except Exception as error:
+            st.session_state["ayar_mesaj"] = (False, f"Ayarlar yüklenemedi: {error}")
+
+    ayar_alani = st.sidebar.expander("💾 Ayarları dışa aktar / içe aktar")
+    with ayar_alani:
+        st.caption("İzinler, sabit görevler, kişiler arası kısıtlar, personel, takvim ve varsa önceki ay Excel'i tek JSON dosyasında saklanır. İçe aktarma mevcut girişleri değiştirir.")
+        st.file_uploader("Ayar yedeği (.json)", type=["json"], key="ayar_yukleme")
+        st.button("📂 Ayarları içe aktar", on_click=ayarlari_ice_aktar)
+        if "ayar_mesaj" in st.session_state:
+            ok, msg = st.session_state.pop("ayar_mesaj")
+            (st.success if ok else st.error)(msg)
+
     col_yil, col_ay = st.sidebar.columns(2)
 
     with col_yil:
-        yil = st.number_input("Yıl", value=2026, min_value=2024, max_value=2030)
+        yil = st.number_input("Yıl", value=2026, min_value=2024, max_value=2030, key="ayar_yil")
     with col_ay:
-        ay = st.selectbox("Ay", list(range(1, 13)), index=9)
+        ay = st.selectbox("Ay", list(range(1, 13)), index=9, key="ayar_ay")
 
     _, gun_sayisi = calendar.monthrange(yil, ay)
     gun_secenekleri = list(range(1, gun_sayisi + 1))
@@ -789,14 +910,14 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         options=resmi_tatil_gunleri,
         default=[],
         help="Resmi tatillerde Kültür biriminden 1 kişinin 8 saatlik vardiyaya geleceği ek tatil günlerini seçiniz. Cumartesiler otomatiktir.",
-    )
+     key="ayar_k8",)
 
     st.sidebar.markdown("---")
     birim_secimi = st.sidebar.selectbox(
         "🔬 Çalışma Grubu / Birim:",
         ["Mikro", "Kültür", "PCR", "Tüm Laboratuvar (Birleşik)"],
         index=3,
-    )
+     key="ayar_birim",)
 
     import uuid
     for name, info in TUM_PERSONEL_VERISI.items():
@@ -807,7 +928,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         "Önceki Ayın Excel Dosyası:",
         type=["xlsx", "xls"],
         help="Sistemin ürettiği 3 sekmeli Excel dosyasını yükleyin.",
+        key="ayar_onceki_excel",
     )
+    if uploaded_file is None and st.session_state.get("ayar_excel_yedek"):
+        excel_yedek = st.session_state["ayar_excel_yedek"]
+        uploaded_file = ayar_io.BytesIO(ayar_base64.b64decode(excel_yedek["icerik"]))
+        uploaded_file.name = excel_yedek["ad"]
+        gecmis_ay_alani.caption("Ayar yedeğinden önceki ay Excel'i kullanılıyor: " + uploaded_file.name)
     kimlik_hatalari = []
     if uploaded_file is not None:
         try:
@@ -848,7 +975,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         "Personel Listesi (Her satıra bir isim):",
         value="\n".join(varsayilan_liste),
         height=220,
-    )
+     key="ayar_personel",)
 
     import uuid
     import hashlib
@@ -911,28 +1038,29 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         max_value=10,
         value=1,
         step=1,
-    )
+     key="ayar_ihtiyac",)
     dinlenme_gun_sayisi = st.sidebar.number_input(
         "Genel Nöbet Arası Min. Dinlenme (Gün):",
         min_value=0,
         max_value=10,
         value=3,
-    )
+     key="ayar_dinlenme",)
     persembe_pazar_yasagi = st.sidebar.checkbox(
         "Genel Perşembe - Pazar Yasağı", value=True
-    )
+    , key="ayar_persembe")
     cuma_haftasonu_siki_kural = True
-    st.sidebar.info("Cuma / Cumartesi / Pazar: kişi başına ayda her türden en fazla 1 nöbet (zorunlu).")
+    st.sidebar.info("Cuma / Cumartesi / Pazar: özel esneklik seçilenler hariç kişi başına ayda her türden en fazla 1 nöbet (zorunlu).")
 
     cozum_arama_suresi = st.sidebar.number_input(
         "Dağıtım aşaması başına arama süresi (saniye)", min_value=5, max_value=120, value=15,
-        help="En iyi denge kanıtlanamazsa süreyi artırabilirsiniz. Brüt nöbet saati, nöbet adedi ve devir sırayla; ardından küçük acil ve Kültür dengelemesi çalışır.",
-    )
+        help="En iyi denge kanıtlanamazsa süreyi artırabilirsiniz. Brüt nöbet saati, birim ortalamasına yakınlık, nöbet adedi ve devir sırayla; ardından küçük acil ve Kültür dengelemesi çalışır.",
+     key="ayar_sure",)
     esnek_personel = st.sidebar.multiselect(
         "🔓 Özel Esneklik Tanınacak Personel(ler):",
         options=nobetci_personeller,
         default=[],
-    )
+        help="Seçilenlerde dinlenme 1 gün olur; Perşembe–Pazar yasağı ve Cuma/Cumartesi/Pazar ayrı ayrı ayda en fazla 1 nöbet sınırı uygulanmaz.",
+     key="ayar_esnek",)
 
     st.sidebar.markdown("---")
     gecmis_ay_alani.subheader("📊 Geçmiş Ay Rotasyonu (Önceki Ay Dosyası)")
@@ -1119,20 +1247,20 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         options=nobetci_personeller,
         default=list(set(otomatik_son_gun_normal)),
         help="Önceki ayın son günü normal nöbet tutan personeller.",
-    )
+     key="ayar_son_normal",)
 
     gecmis_ay_son_gun_acil = gecmis_ay_alani.multiselect(
         "🚨 Geçmiş Ay Son Günü ACİL Nöbetçileri:",
         options=[p for p in nobetci_personeller if p not in gecmis_ay_son_gun_normal],
         default=list(set(otomatik_son_gun_acil)),
         help="Önceki ayın son günü acil nöbet tutan personeller.",
-    )
+     key="ayar_son_acil",)
 
     gecmis_ay_kultur_ni = gecmis_ay_alani.multiselect(
         "🧫 Önceki Aydan Kültür 8s Nİ Devri:",
         options=nobetci_personeller, default=list(set(otomatik_kultur_ni)),
         help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk mesai gününe kalan personeller.",
-    )
+     key="ayar_kultur_ni",)
     ilk_mesai_gunu = next((d for d in range(1, gun_sayisi + 1)
                           if datetime.date(yil, ay, d).weekday() < 5 and d not in resmi_tatil_gunleri), None)
 
@@ -1262,6 +1390,19 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                                          key="gecmis_24s_kapsam_onayi")
         for mesaj in gecmis_tarih_hatalari:
             st.error(mesaj)
+
+    ayar_excel = None
+    if uploaded_file is not None:
+        ayar_excel = {"ad": uploaded_file.name,
+            "icerik": ayar_base64.b64encode(uploaded_file.getvalue()).decode("ascii")}
+    ayar_verisi = {"format": "nobet-sistemi-ayarlar", "surum": 1,
+        "girdiler": {k:v for k,v in st.session_state.items() if ayar_anahtari(k)},
+        "personel": {k:dict(v) for k,v in TUM_PERSONEL_VERISI.items()},
+        "onceki_ay_excel": ayar_excel}
+    with ayar_alani:
+        st.download_button("💾 Ayarları dışa aktar", data=ayar_json.dumps(ayar_verisi,
+            ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=f"Nobet_Ayarlari_{yil}_{ay:02d}.json", mime="application/json")
 
     def is_day_off(yil, ay, day, resmi_tatil_gunleri):
         dt = datetime.date(yil, ay, day)
@@ -1834,7 +1975,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             # Bu üç günün sınırları öncelikle tüm ayın uygunluğuna uygulanır.
             # Kalan günleri çözümsüz bırakacak ayrı bir hafta sonu listesi sabitlenmez.
             cuma_cumartesi_pazar_siniri(x, nobetci_personeller, yil, ay,
-                                       gun_sayisi, zorunlu_kisit)
+                                       gun_sayisi, zorunlu_kisit, esnek_personel=esnek_personel)
 
             kultur_8s_gun_indeksleri = [d for d in range(gun_sayisi) if datetime.date(yil, ay, d + 1).weekday() == 5 or (d + 1) in kultur_8s_tatil_gunleri]
             for d in range(gun_sayisi):
@@ -1949,6 +2090,12 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             birimler_listesi = ["PCR", "Mikro", "Kültür"] if birim_secimi == "Tüm Laboratuvar (Birleşik)" else [birim_secimi]
             saat_farklari, adet_farklari, kategori_farklari = [], [], []
+            ortalama_sapmalari = []
+            birim_kisi_sayilari = [sum(1 for p in nobetci_personeller
+                if TUM_PERSONEL_VERISI.get(p, {}).get("birim") == birim
+                or birim_secimi != "Tüm Laboratuvar (Birleşik)") for birim in birimler_listesi]
+            # Ortalamayı yuvarlamadan, bütün birimlerde aynı saat ölçeğini kullan.
+            sapma_olcegi = math.lcm(*(n for n in birim_kisi_sayilari if n))
             gunluk_saatler = [sum(calculate_nobet_hakedis(yil, ay, d + 1, gun_sayisi,
                               resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in range(gun_sayisi)]
             def fark_hedefi(degerler, alt, ust, ad):
@@ -1971,6 +2118,14 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     model.Add(adet == sum(x[(p, d)] for d in range(gun_sayisi)))
                     saatler.append(saat)
                     adetler.append(adet)
+                kisi_sayisi = len(personeller)
+                birim_toplam_saat = sum(gunluk_saatler) * gunluk_nobetci
+                for p, saat in zip(personeller, saatler):
+                    sapma = model.NewIntVar(0,
+                        kisi_sayisi * sum(gunluk_saatler) + birim_toplam_saat,
+                        f"ortalama_sapma_{p}")
+                    model.AddAbsEquality(sapma, kisi_sayisi * saat - birim_toplam_saat)
+                    ortalama_sapmalari.append(sapma * (sapma_olcegi // kisi_sayisi))
                 saat_farki = fark_hedefi(saatler, 0, sum(gunluk_saatler), birim + "_saat")
                 adet_farki = fark_hedefi(adetler, 0, gun_sayisi, birim + "_adet")
                 # Günlük ihtiyaç sabit: toplamın kişi sayısına bölünmesinden
@@ -1994,7 +2149,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         degerler.append(v)
                     kategori_farklari.append(fark_hedefi(degerler, alt, ust, birim + gun_adi))
 
-            # Cuma/Cumartesi/Pazar tekrarları zorunlu sınırla sıfırdır.
+            # Esnek personel dışındaki Cuma/Cumartesi/Pazar tekrarları zorunlu sınırla sıfırdır.
             gun_turu_tekrar_cezalari = []
 
             kultur_hedef = kultur8_denge_hedefi(
@@ -2003,9 +2158,10 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
 
             hedefler = [
                 ("Brüt nöbet saat dengesi", sum(saat_farklari)),
+                ("Birim ortalamasından toplam saat sapması (ölçekli)", sum(ortalama_sapmalari)),
                 ("Nöbet adedi dengesi", sum(adet_farklari)),
                 ("Gün türü devir dengesi", sum(kategori_farklari)),
-                ("Cuma/Cumartesi/Pazar sınırı (zorunlu)", 0),
+                ("Cuma/Cumartesi/Pazar sınırı (esnek personel hariç)", 0),
                 ("Kültür 8s aylık tekrar / devir dengesi", kultur_hedef),
             ]
             solver = None
@@ -2015,12 +2171,12 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             ilerleme = st.empty()
             for asama, (ad, hedef) in enumerate(hedefler, 1):
                 ilerleme.info(f"Dağıtım kontrolü: {ad}")
-                if asama == 4:
+                if asama == 5:
                     # Zorunlu sınır bir optimizasyon araması gerektirmez.
                     optimizasyon_ozeti.append({"Öncelik":0,"Hedef":ad,"Fark / ceza":0,
-                        "En iyi sonuç kanıtlandı":True,"Kanıt kapsamı":"Zorunlu sınır; tekrar yasak"})
+                        "En iyi sonuç kanıtlandı":True,"Kanıt kapsamı":"Esnek personel hariç zorunlu sınır; tekrar yasak"})
                     continue
-                if asama == 5 and solver is not None:
+                if asama == 6 and solver is not None:
                     # Üst önceliklerde seçilen 24s nöbet listesi tamamlandı.
                     # Küçük vardiya probleminde yalnızca 8s seçimlerini optimize et.
                     for var in x.values():
@@ -2051,9 +2207,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     break
                 solver, status = aday, aday_status
                 deger = int(solver.Value(hedef))
-                optimizasyon_ozeti.append({"Öncelik": asama if asama < 5 else 5, "Hedef": ad,
+                optimizasyon_ozeti.append({"Öncelik": asama, "Hedef": ad,
                     "Fark / ceza": deger, "En iyi sonuç kanıtlandı": status == cp_model.OPTIMAL,
-                    "Kanıt kapsamı":"Sabit 24s listeye bağlı" if asama==5 else "Önceki bulunan değerler korunarak"})
+                    "Kanıt kapsamı":"Sabit 24s listeye bağlı" if asama==6 else "Önceki bulunan değerler korunarak"})
                 if status != cp_model.OPTIMAL:
                     st.warning(f"{ad}: en küçük fark süre içinde kanıtlanamadı. Bulunan değer korunarak sonraki daha düşük öncelik değerlendirilecek.")
                 # Önceki hedefin elde edilmiş değeri değiştirilemez.
@@ -2063,7 +2219,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     model.AddHint(var, solver.Value(var))
             if (kultur_nobetcileri and solver is not None
                     and status in [cp_model.OPTIMAL, cp_model.FEASIBLE]
-                    and asama < 5):
+                    and asama < 6):
                 # Saat hedefinde süre dolsa bile mevcut normal nöbet listesini
                 # değiştirmeden küçük Kültür 8s problemini tamamla.
                 ilerleme.info("Kültür 8s aylık tekrar / devir dengesi kontrol ediliyor")
@@ -2079,7 +2235,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 yeni_status = aday.Solve(model)
                 if yeni_status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                     solver, status = aday, yeni_status
-                    optimizasyon_ozeti.append({"Öncelik": 5,
+                    optimizasyon_ozeti.append({"Öncelik": 6,
                         "Hedef": "Kültür 8s aylık tekrar / devir dengesi",
                         "Fark / ceza": int(solver.Value(kultur_hedef)),
                         "En iyi sonuç kanıtlandı": status == cp_model.OPTIMAL})
@@ -2211,7 +2367,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                         "Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"])
                     counts = {tr_gunler[w]:sum(datetime.date(yil,ay,d).weekday()==w for d in nobet_dict[p])
                               for w in [4,5,6]}
-                    if any(v > 1 for v in counts.values()):
+                    if p not in esnek_personel and any(v > 1 for v in counts.values()):
                         raise ValueError(f"{p}: Cuma/Cumartesi/Pazar maks.1 sınırı ihlal edildi; çıktı oluşturulmadı.")
                     denge_rows.append({"Personel":p,"Birim":TUM_PERSONEL_VERISI[p]["birim"],
                         "Brüt Saat":sum(gunluk_saatler[d-1] for d in nobet_dict[p]),"Net Hakediş":actual_net,
@@ -2237,7 +2393,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                 # Denetim kayıtları Excel'de kalıcıdır; üç görünür sekme korunur.
                 kontrol_wb = openpyxl.load_workbook(excel_bytes)
                 kontrol_ws = kontrol_wb.create_sheet("Dağıtım Kontrolü")
-                kontrol_ws.append(["Mod", "Ön koşul: Cuma/Cumartesi/Pazar ayrı ayrı maks.1; brüt nöbet saati → nöbet adedi → gün türü devir → ayrı ortak havuz acil"])
+                kontrol_ws.append(["Mod", "Ön koşul: özel esneklik seçilenler hariç Cuma/Cumartesi/Pazar ayrı ayrı maks.1; brüt nöbet saati → birim ortalamasına yakınlık → nöbet adedi → gün türü devir → ayrı ortak havuz acil"])
                 kontrol_ws.append(list(df_denge.columns))
                 for values in df_denge.itertuples(index=False,name=None):
                     kontrol_ws.append(list(values))
@@ -2270,7 +2426,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     "birim_secimi": birim_secimi, "yil": yil, "ay": ay,
                 }
                 st.balloons()
-                st.success("Cuma/Cumartesi/Pazar maks.1 sınırına uygun nöbet listesi oluşturuldu.")
+                st.success("Özel esneklik seçilenler hariç Cuma/Cumartesi/Pazar maks.1 sınırına uygun nöbet listesi oluşturuldu.")
                 if len([r for r in optimizasyon_ozeti if 0<r["Öncelik"]<4])==3 and all(r["En iyi sonuç kanıtlandı"] for r in optimizasyon_ozeti if 0<r["Öncelik"]<4):
                     st.info("Brüt saat, nöbet adedi ve devir hedeflerinin öncelik sıralı optimumu kanıtlandı. Acil hedefleri bu değerler korunarak değerlendirilir; Kültür 8s seçilen 24s listeye bağlıdır.")
                 else:
@@ -2315,11 +2471,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             st.warning("⚠️ Güncel değil — girdiler değişti. Aşağıdaki liste eski hesaptır; yeniden hesaplayın. Excel indirme kapatıldı.")
         if sonuc.get("optimizasyon_ozeti"):
             with st.expander("Dağıtım öncelikleri ve kontrol sonuçları"):
-                st.caption("Önce Cuma/Cumartesi/Pazar için ayrı ayrı kişi başı maks.1 sınırı sağlanır. Ardından brüt nöbet saati, nöbet adedi ve gün türü devir dengesi değerlendirilir. Acil ayrı ortak havuzda dağıtılır; net hakediş yalnız puantajda hesaplanır ve raporlanır. Bir hedefin optimum olması tüm hedeflerin optimum olduğunu göstermez.")
+                st.caption("Önce özel esneklik seçilenler hariç Cuma/Cumartesi/Pazar için ayrı ayrı kişi başı maks.1 sınırı sağlanır. Ardından brüt nöbet saati aralığı, birim ortalamasına yakınlık, nöbet adedi ve gün türü devir dengesi değerlendirilir. Acil ayrı ortak havuzda dağıtılır; net hakediş yalnız puantajda hesaplanır ve raporlanır. Bir hedefin optimum olması tüm hedeflerin optimum olduğunu göstermez.")
                 st.dataframe(pd.DataFrame(sonuc["optimizasyon_ozeti"]), use_container_width=True)
         if sonuc.get("df_denge") is not None:
             with st.expander("Net hakediş ve Cuma/Cumartesi/Pazar sınırları",expanded=True):
-                st.caption("Dağıtım brüt nöbet saatlerine göre yapılır. Mahsup ve net hakediş puantajda hesaplanır; dağıtım hedefi değildir. Toplam/gün türü kişi kotası yok; yalnız Cuma/Cumartesi/Pazar için ayrı ayrı maks.1 zorunludur.")
+                st.caption("Dağıtım brüt nöbet saatlerine göre yapılır. Mahsup ve net hakediş puantajda hesaplanır; dağıtım hedefi değildir. Toplam/gün türü kişi kotası yok; yalnız özel esneklik seçilenler hariç Cuma/Cumartesi/Pazar için ayrı ayrı maks.1 zorunludur.")
                 st.dataframe(sonuc["df_denge"],use_container_width=True,hide_index=True)
             with st.expander("Liste sonrası günlük uygunluk"):
                 st.caption("Seçilmiş listedeki görevler korunursa oluşan engellerdir; başka bir listenin imkânsız olduğunu kanıtlamaz. Kültür 8s seçimleri bu aday hesabına dahil değildir.")
