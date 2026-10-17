@@ -875,6 +875,14 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             st.session_state.update(data["girdiler"])
             st.session_state["personel_kayitlari"] = data["personel"]
             st.session_state["ayar_excel_yedek"] = data.get("onceki_ay_excel")
+            restored_excel = data.get("onceki_ay_excel")
+            if restored_excel:
+                restored_bytes = ayar_base64.b64decode(restored_excel["icerik"])
+                st.session_state["ayar_gecmis_kaynak"] = (
+                    data["girdiler"]["ayar_yil"], data["girdiler"]["ayar_ay"],
+                    __import__("hashlib").sha256(restored_bytes).hexdigest())
+            else:
+                st.session_state.pop("ayar_gecmis_kaynak", None)
             st.session_state.pop("ayar_onceki_excel", None)
             st.session_state["hesaplanan_sonuc"] = None
             st.session_state["ayar_mesaj"] = (True, "Ayarlar yüklendi. Dönemi ve girişleri kontrol edip listeyi yeniden oluşturabilirsiniz.")
@@ -1242,23 +1250,47 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         otomatik_son_gun_normal = [p for p, dt, tur in gecmis_24s_kayitlari if dt == onceki_son and tur == "Normal"]
         otomatik_son_gun_acil = [p for p, dt, tur in gecmis_24s_kayitlari if dt == onceki_son and tur == "Acil"]
 
+    def gecmis_secimlerini_esitle(kaynak, otomatikler, zorla=False):
+        """Yeni Excel'de otomatik doldur; aynı dosyada elle yapılan değişikliği koru."""
+        onceki = st.session_state.get("ayar_gecmis_kaynak")
+        if kaynak is not None and (zorla or onceki != kaynak):
+            for alan, degerler in otomatikler.items():
+                st.session_state[alan] = sorted(set(degerler))
+            st.session_state["ayar_gecmis_kaynak"] = kaynak
+
+    gecmis_kaynak = ((yil, ay, hashlib.sha256(uploaded_file.getvalue()).hexdigest())
+                      if uploaded_file is not None else None)
+    gecmis_otomatik_secimler = {
+        "ayar_son_normal": otomatik_son_gun_normal,
+        "ayar_son_acil": otomatik_son_gun_acil,
+        "ayar_kultur_ni": otomatik_kultur_ni,
+    }
+    if gecmis_kaynak is None:
+        st.session_state.pop("ayar_gecmis_kaynak", None)
+    gecmis_secimlerini_esitle(gecmis_kaynak, gecmis_otomatik_secimler)
+    if uploaded_file is not None:
+        yeniden_oku = gecmis_ay_alani.button("↻ Son gün / Nİ seçimlerini Excel'den yenile",
+            help="Aşağıdaki üç alanda elle yaptığınız seçimleri Excel'den okunan değerlerle değiştirir.")
+        if yeniden_oku:
+            gecmis_secimlerini_esitle(gecmis_kaynak, gecmis_otomatik_secimler, zorla=True)
+
     gecmis_ay_son_gun_normal = gecmis_ay_alani.multiselect(
         "🌙 Geçmiş Ay Son Günü NORMAL Nöbetçileri:",
         options=nobetci_personeller,
-        default=list(set(otomatik_son_gun_normal)),
+        default=list(set(otomatik_son_gun_normal)) if "ayar_son_normal" not in st.session_state else None,
         help="Önceki ayın son günü normal nöbet tutan personeller.",
      key="ayar_son_normal",)
 
     gecmis_ay_son_gun_acil = gecmis_ay_alani.multiselect(
         "🚨 Geçmiş Ay Son Günü ACİL Nöbetçileri:",
         options=[p for p in nobetci_personeller if p not in gecmis_ay_son_gun_normal],
-        default=list(set(otomatik_son_gun_acil)),
+        default=list(set(otomatik_son_gun_acil)) if "ayar_son_acil" not in st.session_state else None,
         help="Önceki ayın son günü acil nöbet tutan personeller.",
      key="ayar_son_acil",)
 
     gecmis_ay_kultur_ni = gecmis_ay_alani.multiselect(
         "🧫 Önceki Aydan Kültür 8s Nİ Devri:",
-        options=nobetci_personeller, default=list(set(otomatik_kultur_ni)),
+        options=nobetci_personeller, default=list(set(otomatik_kultur_ni)) if "ayar_kultur_ni" not in st.session_state else None,
         help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk mesai gününe kalan personeller.",
      key="ayar_kultur_ni",)
     ilk_mesai_gunu = next((d for d in range(1, gun_sayisi + 1)
