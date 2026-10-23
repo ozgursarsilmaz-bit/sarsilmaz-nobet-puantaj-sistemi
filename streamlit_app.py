@@ -58,6 +58,11 @@ def mikrobiyoloji_ek_excel_formlari(wb, yil, ay, personeller, acil_nobet_dict):
                     if cell.has_style:
                         dest.font = copy(cell.font)
                         dest.fill = copy(cell.fill)
+                        # Yeni formlarda örnek aya ait acil vurguları taşınmaz.
+                        if (cell.fill.patternType == 'solid'
+                                and cell.fill.fgColor.type == 'rgb'
+                                and cell.fill.fgColor.rgb[-6:].upper() == 'FFFF00'):
+                            dest.fill = PatternFill(fill_type='solid', fgColor='FFFFFFFF')
                         dest.border = copy(cell.border)
                         dest.number_format = cell.number_format
                     dest.alignment = copy(cell.alignment)
