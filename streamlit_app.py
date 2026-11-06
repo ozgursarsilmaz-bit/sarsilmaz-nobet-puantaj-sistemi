@@ -1263,15 +1263,6 @@ def aysonu_ekrani():
         st.error(str(e))
         return
     st.session_state['aysonu_gorev_taslak']=tasks
-    if len(tasks)>1:
-        label=lambda i:f"{i}: {tasks[i]['Tarih']} — {tasks[i]['Birim']} — {tasks[i]['Personel']}"
-        a,b=st.columns(2)
-        i=a.selectbox('Takas: birinci nöbet',range(len(tasks)),format_func=label,key=f'aysonu_takas_a_{rev}')
-        j=b.selectbox('Takas: ikinci nöbet',range(len(tasks)),index=1,format_func=label,key=f'aysonu_takas_b_{rev}')
-        if st.button('İki nöbetin personelini değiştir'):
-            tasks[i]['Personel'],tasks[j]['Personel']=tasks[j]['Personel'],tasks[i]['Personel']
-            state['gorevler']=tasks;state['izinler']=leaves
-            st.session_state['aysonu_rev']=rev+1;st.rerun()
     with st.expander('İlk plan ve değişiklik özeti'):
         st.write(f"İlk plan: {len(state['ilk_gorevler'])} görev. Güncel tablo: {len(tasks)} görev. İzin/rapor: {len(leaves)} kayıt.")
         old=[(r['Tarih'],r['Birim'],r['Görev'],r['Personel'],r['Acil']) for r in state['ilk_gorevler']]
@@ -1295,8 +1286,6 @@ def aysonu_ekrani():
             file_name=f"Mikrobiyoloji Nobet_Puantaj_{c['yil']}_{c['ay']:02d}_Ay_Sonu.xlsx",disabled=stale,
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',on_click='ignore')
         st.caption('Bu Excel dosyası izin/raporları, ilk planı ve düzenlenmiş görevleri de saklar. Daha sonra 7. bölümde açarak devam edebilirsiniz.')
-        for title,df in result['preview'].items():
-            with st.expander(title): st.dataframe(df.astype(str),use_container_width=True,hide_index=True)
     # Taslak yedeği: uygulamadan çıkmadan indirilebilir, hesaplama gerekmez.
     draft=deepcopy(state); draft['gorevler']=tasks;draft['izinler']=leaves
     st.download_button('Düzenleme taslağını kaydet (JSON)',json.dumps(draft,ensure_ascii=False,default=str).encode(),
