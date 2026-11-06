@@ -121,6 +121,8 @@ def mikrobiyoloji_ek_excel_formlari(wb, yil, ay, personeller, acil_nobet_dict):
     toplam_sutunu = gun_sayisi + 5  # Şablondaki üç sütunluk toplam alanının ortası.
     for d in range(1, gun_sayisi+1):
         liste.cell(7, d+3, d)
+        fill = PatternFill("solid", fgColor="A6A6A6" if puantaj.cell(7,d+2).fill.fgColor.rgb in ("00A6A6A6", "FFA6A6A6") else "FFFFFF")
+        for rr in range(7,8+n): liste.cell(rr,d+3).fill = fill
     ad_ayrimlari = {
         'HİCRAN ATA AYHAN': ('HİCRAN', 'ATA AYHAN'),
         'SEÇİL EMİR YILDIRAK': ('SEÇİL', 'EMİR YILDIRAK'),
@@ -884,6 +886,876 @@ def ortak_mahsup(gece, normal, saat, negatif=False):
     return gece, normal - ek_normal, saat - ek_normal
 
 
+
+# Ay sonu kayıtları dağıtım modelinden bağımsızdır.
+import json
+import hashlib
+from copy import deepcopy
+
+AYSONU_KODLAR = ['EV', 'Eİ', 'Yİ', 'GÖ', 'R', 'Mİ', 'Öİ', 'Rİ', 'SEİ', 'Üİ', 'Kİ', 'İK']
+AYSONU_IZIN_SUTUNLARI = ['Personel', 'Başlangıç', 'Gün Sayısı', 'Kod', 'Kaynak Açıklama']
+AYSONU_GOREV_SUTUNLARI = ['Tarih', 'Birim', 'Görev', 'Personel', 'Acil']
+
+
+def aysonu_mesai(c, dt):
+    return ortak_gun_statusu(dt, c['yil'], c['ay'], c['resmi_tatil_gunleri'],
+                            c['yarim_gun_tatil_gunleri'], takvim=c.get('takvim', {}))
+
+
+def aysonu_json_yaz(wb, ad, veri):
+    if ad in wb: del wb[ad]
+    ws = wb.create_sheet(ad)
+    raw = json.dumps(veri, ensure_ascii=False, default=lambda v: sorted(v) if isinstance(v,set) else str(v))
+    for i in range(0,len(raw),30000): ws.append([raw[i:i+30000]])
+    ws.sheet_state = 'hidden'
+
+
+def aysonu_json_oku(wb, ad):
+    return json.loads(''.join(str(row[0]) for row in wb[ad].values if row[0]))
+
+
+def aysonu_tarih(value):
+    if value is None or pd.isna(value): raise ValueError('Tarih boş bırakılamaz.')
+    if isinstance(value, datetime.datetime): return value.date()
+    if isinstance(value, datetime.date): return value
+    text = str(value).strip()
+    if len(text)>=10 and text[4:5]=='-' and text[7:8]=='-':
+        return datetime.date.fromisoformat(text[:10])
+    return pd.to_datetime(text, dayfirst=True, errors='raise').date()
+
+
+def aysonu_izin_oku(data, personeller):
+    df = pd.read_excel(BytesIO(data))
+    required = ['IzinBaslangicTarihi', 'KullanilanGunSayisi', 'Pers Isim', 'IzinTipi']
+    if any(k not in df for k in required):
+        raise ValueError('Gerekli sütunlar: ' + ', '.join(required))
+    names = {tr_norm(p):p for p in personeller}
+    mapping = {tr_norm(k):v for k,v in {
+        'Yıllık İzin':'Yİ','Tek Hekim Raporu':'R','Küçük Heyet Raporu':'R',
+        'Heyet Raporu':'R','Raporlu':'R','Kongre Görevlendirilmesi':'Kİ',
+        'Ücretsiz İzin':'Üİ','Evlilik İzni':'EV','Eğitim İzni':'Eİ','Görevlendirme':'GÖ',
+        'Mazeret İzni':'Mİ','Ölüm İzni':'Öİ','Refakat İzni':'Rİ','Sendika İzni':'SEİ',
+        'Kongre İzni':'Kİ','İş Kazası':'İK'}.items()}
+    rows=[]
+    for i,r in df.iterrows():
+        if pd.isna(r['Pers Isim']): continue
+        try:
+            start=aysonu_tarih(r['IzinBaslangicTarihi'])
+            count=float(r['KullanilanGunSayisi'])
+            if not count.is_integer() or count<=0: raise ValueError('Gün sayısı pozitif tam sayı olmalı.')
+            original=str(r['Pers Isim']).strip()
+            kind=str(r['IzinTipi']).strip()
+            rows.append({'Personel':names.get(tr_norm(original),original),'Başlangıç':start.isoformat(),
+                         'Gün Sayısı':int(count),'Kod':kind if kind in AYSONU_KODLAR else mapping.get(tr_norm(kind),''),
+                         'Kaynak Açıklama':kind})
+        except Exception as exc: raise ValueError(f'Excel satır {i+2}: {exc}') from exc
+    return rows
+
+
+def aysonu_izin_birlestir(old, new):
+    out=[]; seen=set()
+    for r in old+new:
+        key=(tr_norm(r['Personel']),str(r['Başlangıç']),int(r['Gün Sayısı']),r['Kod'])
+        if key not in seen: out.append(r); seen.add(key)
+    return out
+
+
+def aysonu_durum_haritasi(rows, c):
+    statuses={}; normalized=[]
+    names=c['tum_girilen_personeller']; lookup={tr_norm(p):p for p in names}
+    for i,r in enumerate(rows,1):
+        if not any(str(v).strip() for v in r.values() if v is not None and not pd.isna(v)): continue
+        name=lookup.get(tr_norm(r.get('Personel','')))
+        if not name: raise ValueError(f'İzin satır {i}: personel listede bulunamadı: {r.get("Personel", "")}')
+        code=str(r.get('Kod','')).strip()
+        if code not in AYSONU_KODLAR: raise ValueError(f'İzin satır {i}: {name} için durum kodunu seçiniz ({r.get("Kaynak Açıklama", "")}).')
+        start=aysonu_tarih(r.get('Başlangıç')); count=float(r.get('Gün Sayısı',0))
+        if not count.is_integer() or count<=0 or count>3660: raise ValueError(f'İzin satır {i}: gün sayısı geçersiz.')
+        normalized.append({'Personel':name,'Başlangıç':start.isoformat(),'Gün Sayısı':int(count),'Kod':code,'Kaynak Açıklama':str(r.get('Kaynak Açıklama','') or '')})
+        for offset in range(int(count)):
+            dt=start+datetime.timedelta(days=offset)
+            if (dt.year,dt.month)!=(c['yil'],c['ay']): continue
+            key=(name,dt.day)
+            if key in statuses and statuses[key]!=code:
+                raise ValueError(f'{name}, {dt:%d.%m.%Y}: aynı güne iki farklı durum kodu girilmiş; kayıtları düzenleyiniz.')
+            statuses[key]=code
+    return statuses,normalized
+
+
+def aysonu_eski_baglam(wb):
+    """Eski çıktıyı yeniden dağıtmadan aç; belirsiz devirler ekranda düzenlenir."""
+    for name in ['Aylık Görev Listesi','Puantaj Tablosu','İstatistik & Mesai Yükü']:
+        if name not in wb: raise ValueError(f'Gerekli sayfa bulunamadı: {name}')
+    dt=aysonu_tarih(wb['Aylık Görev Listesi'].cell(4,1).value)
+    import uuid
+    y,m=dt.year,dt.month;n=calendar.monthrange(y,m)[1];ws=wb['Puantaj Tablosu']
+    people=[];registry={}
+    for row in ws.iter_rows(min_row=9,values_only=True):
+        if not row[0] or row[0]=='Hesaplanan Nöbet Saati':break
+        people.append(str(row[0]));registry[str(row[0])]={'id':str(uuid.uuid5(uuid.NAMESPACE_DNS,str(row[0]))),'birim':row[1],'muaf':False}
+    if 'Personel Kimlikleri' in wb:
+        for pid,p,unit,muaf,*_ in list(wb['Personel Kimlikleri'].values)[1:]:
+            if p in registry:registry[p]={'id':pid,'birim':unit,'muaf':bool(muaf)}
+    stat=wb['İstatistik & Mesai Yükü'];prev={};prevac={};prevk8={};duty=[]
+    for row in stat.iter_rows(min_row=3,values_only=True):
+        p=row[0]
+        if p not in registry:continue
+        duty.append(p);prev[p]={tr_gunler[i]:int(row[2+3*i] or 0) for i in range(7)}
+        prevac[p]=int(row[25] or 0) if len(row)>25 else 0
+        prevk8[p]=int(row[28] or 0) if len(row)>28 else 0
+    full=[];half=[]
+    for day in range(1,n+1):
+        vals={str(ws.cell(9+i,day+2).value) for i in range(len(people))}
+        if '5' in vals:half.append(day)
+        elif datetime.date(y,m,day).weekday()<5 and '8' not in vals:
+            if ws.cell(7,day+2).fill.fgColor.type=='rgb' and ws.cell(7,day+2).fill.fgColor.rgb[-6:]=='A6A6A6':full.append(day)
+    first=next((d for d in range(1,n+1) if datetime.date(y,m,d).weekday()<5 and d not in full),None)
+    normal=[p for i,p in enumerate(people) if ws.cell(9+i,3).value=='Nİ']
+    return {'yil':y,'ay':m,'gun_sayisi':n,'birim_secimi':'Tüm Laboratuvar (Birleşik)',
+        'resmi_tatil_gunleri':full,'yarim_gun_tatil_gunleri':half,'kultur_8s_tatil_gunleri':[],
+        'tum_girilen_personeller':people,'nobetci_personeller':duty,'TUM_PERSONEL_VERISI':registry,
+        'gecmis_ay_kultur_ni':[],'ilk_mesai_gunu':first,'gecmis_ay_son_gun_normal':normal,
+        'gecmis_ay_son_gun_acil':[],'gecmis_istatistik':prev,'gecmis_acil_istatistik':prevac,
+        'gecmis_kultur8_istatistik':prevk8,'takvim':{},'eski_excel':True}
+
+
+def aysonu_kaynak_oku(data):
+    wb=openpyxl.load_workbook(BytesIO(data))
+    if 'Ay Sonu Kayıt' in wb:
+        state=aysonu_json_oku(wb,'Ay Sonu Kayıt')
+        return state
+    c = aysonu_json_oku(wb,'Ay Sonu Bağlam') if 'Ay Sonu Bağlam' in wb else aysonu_eski_baglam(wb)
+    tasks=[]
+    ws=wb['Aylık Görev Listesi']
+    for row in list(ws.values)[3:3+c['gun_sayisi']]:
+        date=aysonu_tarih(row[0]).isoformat()
+        for col,unit in [(2,'PCR'),(3,'Mikro'),(4,'Kültür'),(5,'Kültür')]:
+            for part in str(row[col] or '').split(','):
+                name=part.replace('(Acil)','').strip()
+                if name:
+                    tasks.append({'Tarih':date,'Birim':unit,'Görev':'Kültür 8s' if col==5 else '24s','Personel':name,'Acil':'(Acil)' in part})
+    return {'surum':1,'context':c,'gorevler':tasks,'ilk_gorevler':deepcopy(tasks),'izinler':[],'gecmis':[]}
+
+
+def aysonu_onizleme(wb, title):
+    """Uygulamanın ürettiği toplama/bağlantı formüllerini ekranda değer olarak göster."""
+    import re
+    cache={}
+    def value(sheet,coordinate):
+        key=(sheet,coordinate)
+        if key in cache:return cache[key]
+        raw=wb[sheet][coordinate].value
+        if not isinstance(raw,str) or not raw.startswith('='):return raw
+        cache[key]=0
+        def atom(expr):
+            expr=expr.strip()
+            match=re.fullmatch(r"(?:'([^']+)'!)?([A-Z]+[0-9]+)",expr)
+            if match:return value(match[1] or sheet,match[2]) or 0
+            match=re.fullmatch(r'SUM\(([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)\)',expr)
+            if match:
+                return sum(value(sheet,f'{get_column_letter(c)}{r}') or 0
+                    for row in wb[sheet][f'{match[1]}{match[2]}:{match[3]}{match[4]}']
+                    for cell in row for r,c in [(cell.row,cell.column)])
+            return float(expr)
+        try: result=sum(atom(part) for part in raw[1:].split('+'))
+        except (ValueError,TypeError,KeyError):result=raw
+        cache[key]=result
+        return result
+    ws=wb[title]
+    return pd.DataFrame([[value(title,cell.coordinate) for cell in row] for row in ws])
+
+
+def aysonu_hesapla(state, tasks, leaves):
+    c=deepcopy(state['context']); statuses, leaves=aysonu_durum_haritasi(leaves,c)
+    people=c['tum_girilen_personeller']; n=c['gun_sayisi']; y=c['yil']; m=c['ay']
+    shifts={p:set() for p in people}; k8={p:set() for p in people}; acil={p:set() for p in people}
+    clean=[]; info=[]; task_units={}
+    for i,r in enumerate(tasks,1):
+        if not str(r.get('Personel','') or '').strip(): continue
+        p=r['Personel']; dt=aysonu_tarih(r['Tarih']); kind=r['Görev']
+        if p not in people: raise ValueError(f'Nöbet satır {i}: personel bulunamadı.')
+        if (dt.year,dt.month)!=(y,m): raise ValueError(f'Nöbet satır {i}: tarih çalışma ayı dışında.')
+        if kind not in ['24s','Kültür 8s'] or r['Birim'] not in ['PCR','Mikro','Kültür']: raise ValueError(f'Nöbet satır {i}: görev/birim geçersiz.')
+        row={'Tarih':dt.isoformat(),'Birim':r['Birim'],'Görev':kind,'Personel':p,'Acil':bool(r.get('Acil',False))}
+        clean.append(row)
+        if (p,dt.day) in statuses:
+            info.append(f'{dt:%d.%m.%Y} — {p}: {statuses[p,dt.day]} kayıtlı; bu görev çalışılmış sayılmadı. Yerine çalışan kişiyi seçebilirsiniz.')
+            continue
+        target=k8 if kind=='Kültür 8s' else shifts
+        if dt.day in shifts[p] or dt.day in k8[p]: raise ValueError(f'{p}, {dt:%d.%m.%Y}: aynı görev birden fazla yazılmış; yinelenen satırı siliniz.')
+        target[p].add(dt.day)
+        task_units[f'{p}|{dt.day}']=r['Birim']
+        if kind=='24s' and row['Acil']: acil[p].add(dt.day)
+    c['gorev_birimleri']=task_units
+    generate,daily,metrics,*_=personel_hesap_motoru(c,statuses)
+    # Manuel atama yapılan muaflar da gerçekleşen görev listesinde yer alır.
+    duty_people=list(dict.fromkeys(c['nobetci_personeller']+[r['Personel'] for r in clean]))
+    output=generate(y,m,duty_people,people,shifts,k8,acil,c['gecmis_istatistik'],
+        c['gecmis_acil_istatistik'],c['gecmis_kultur8_istatistik'],n,c['birim_secimi'],
+        c['resmi_tatil_gunleri'],c['yarim_gun_tatil_gunleri'],c['kultur_8s_tatil_gunleri'],
+        c['gecmis_ay_son_gun_normal'],c['gecmis_ay_son_gun_acil'])
+    wb=openpyxl.load_workbook(output)
+    updated=deepcopy(state); updated['gorevler']=clean; updated['izinler']=leaves
+    updated['gecmis']=state.get('gecmis',[])+[{'zaman':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'aciklama':f'{len(clean)} görev ve {len(leaves)} izin/rapor kaydı uygulandı.'}]
+    aysonu_json_yaz(wb,'Ay Sonu Kayıt',updated)
+    wb.calculation=openpyxl.workbook.properties.CalcProperties(calcId=191029,fullCalcOnLoad=True)
+    # Son durumdan yeniden oluşturulur; önceki dağıtımın uygunluk raporu taşınmaz.
+    preview={}
+    for title in ['Aylık Görev Listesi','İstatistik & Mesai Yükü','Puantaj Tablosu','Mesai Sonrası Liste','Mesai sonrası özet','MAAŞ LİSTE']:
+        ws=wb[title]
+        preview[title]=aysonu_onizleme(wb,title)
+    out=BytesIO();wb.save(out)
+    return out.getvalue(),updated,preview,info
+
+
+def aysonu_ekrani():
+    st.header('7. Ay Sonu Düzenleme')
+    st.caption('Gerçekleşen nöbetleri ve izin/raporları düzenleyin. Dağıtım ve uygunluk kuralları çalıştırılmaz. Nİ ve saatler son durumdan hesaplanır.')
+    source=st.file_uploader('Ay başı veya daha önce düzenlenmiş ay sonu Excel dosyası',type=['xlsx'],key='aysonu_kaynak')
+    current=st.session_state.get('hesaplanan_sonuc')
+    if current and st.button('1. bölümdeki son listeyi kullan'):
+        try:
+            st.session_state['aysonu_state']=aysonu_kaynak_oku(current['excel_bytes'].getvalue())
+            st.session_state['aysonu_rev']=st.session_state.get('aysonu_rev',0)+1
+            st.session_state.pop('aysonu_output',None)
+            st.session_state.pop('aysonu_izin_taslak',None)
+            st.session_state.pop('aysonu_gorev_taslak',None)
+            st.session_state.pop('aysonu_import_bilgi',None)
+            st.session_state.pop('aysonu_aktarilmayan',None)
+            st.rerun()
+        except Exception as e: st.error(str(e))
+    if source and st.button('Excel listesini aç'):
+        try:
+            st.session_state['aysonu_state']=aysonu_kaynak_oku(source.getvalue())
+            st.session_state['aysonu_rev']=st.session_state.get('aysonu_rev',0)+1
+            st.session_state.pop('aysonu_output',None)
+            st.session_state.pop('aysonu_izin_taslak',None)
+            st.session_state.pop('aysonu_gorev_taslak',None)
+            st.session_state.pop('aysonu_import_bilgi',None)
+            st.session_state.pop('aysonu_aktarilmayan',None)
+            st.rerun()
+        except Exception as e: st.error(str(e))
+    backup=st.file_uploader('Kaydedilmiş düzenleme taslağını aç',type=['json'],key='aysonu_taslak_yukle')
+    if backup and st.button('Taslağı aç'):
+        try:
+            d=json.loads(backup.getvalue())
+            if d.get('surum')!=1 or not all(k in d for k in ['context','gorevler','ilk_gorevler','izinler']): raise ValueError('Geçersiz ay sonu taslağı.')
+            st.session_state['aysonu_state']=d; st.session_state['aysonu_rev']=st.session_state.get('aysonu_rev',0)+1
+            st.session_state.pop('aysonu_output',None)
+            st.session_state.pop('aysonu_izin_taslak',None)
+            st.session_state.pop('aysonu_gorev_taslak',None)
+            st.session_state.pop('aysonu_import_bilgi',None)
+            st.session_state.pop('aysonu_aktarilmayan',None);st.rerun()
+        except Exception as e: st.error(str(e))
+
+    state=st.session_state.get('aysonu_state')
+    if not state:
+        st.info('Başlamak için 1. bölümdeki son listeyi kullanın veya mevcut nöbet/puantaj Excel dosyasını açın.')
+        return
+    c=state['context']; people=c['tum_girilen_personeller']; rev=st.session_state.get('aysonu_rev',0)
+    if c.get('eski_excel'):
+        st.info('Eski Excel açıldı; nöbetler yeniden dağıtılmadı. Bu dosyada ay geçişi takvimi ve önceki ay Nİ türleri saklanmadığından aşağıdaki alanları kontrol ediniz.')
+        with st.expander('Takvim ve önceki ay devir bilgileri',expanded=True):
+            c['resmi_tatil_gunleri']=st.multiselect('Tam gün tatiller',range(1,c['gun_sayisi']+1),default=c['resmi_tatil_gunleri'],key=f'aysonu_full_{rev}')
+            c['yarim_gun_tatil_gunleri']=st.multiselect('Yarım gün / arife',range(1,c['gun_sayisi']+1),default=c['yarim_gun_tatil_gunleri'],key=f'aysonu_half_{rev}')
+            c['gecmis_ay_son_gun_normal']=st.multiselect('Önceki ay son gün normal nöbetçileri',people,default=c['gecmis_ay_son_gun_normal'],key=f'aysonu_prevnormal_{rev}')
+            c['gecmis_ay_son_gun_acil']=st.multiselect('Önceki ay son gün acil nöbetçileri',people,default=c['gecmis_ay_son_gun_acil'],key=f'aysonu_prevacil_{rev}')
+            c['gecmis_ay_kultur_ni']=st.multiselect('Önceki aydan Kültür 8s Nİ devri',people,default=c['gecmis_ay_kultur_ni'],key=f'aysonu_prevk8_{rev}')
+            nxt=datetime.date(c['yil'],c['ay'],c['gun_sayisi'])+datetime.timedelta(days=1)
+            value=aysonu_mesai(c,nxt)
+            status=st.selectbox(f'Sonraki ay ilk günü ({nxt:%d.%m.%Y}) mesai saati',[0,5,8],index=[0,5,8].index(value),key=f'aysonu_next_{rev}')
+            c['takvim'][nxt.isoformat()]=status
+            c['ilk_mesai_gunu']=next((d for d in range(1,c['gun_sayisi']+1) if aysonu_mesai(c,datetime.date(c['yil'],c['ay'],d))>0),None)
+    st.subheader(f"{c['ay']:02d}/{c['yil']} — İzin / rapor kayıtları")
+    st.caption('Başlangıç + kullanılan gün sayısı esas alınır. Örnek: 2 Kasım, 5 gün → 2–6 Kasım. Tatiller dâhil takvim günleri işaretlenir; saat indirimi yalnız mesai günlerindedir.')
+    leave_file=st.file_uploader('İzin / rapor Excel dosyası',type=['xlsx'],key='aysonu_izin_dosya')
+    if st.button('İzin / rapor kayıtlarını tabloya ekle',disabled=leave_file is None):
+        try:
+            # O sırada editördeki elle değiştirilen kayıtları da koru.
+            pending=st.session_state.get('aysonu_izin_taslak',state['izinler'])
+            rows=aysonu_izin_oku(leave_file.getvalue(),people)
+            first=datetime.date(c['yil'],c['ay'],1); last=datetime.date(c['yil'],c['ay'],c['gun_sayisi'])
+            relevant=[r for r in rows if aysonu_tarih(r['Başlangıç'])<=last and aysonu_tarih(r['Başlangıç'])+datetime.timedelta(days=r['Gün Sayısı']-1)>=first and r['Personel'] in people]
+            st.session_state['aysonu_aktarilmayan']=[r for r in rows if r not in relevant]
+            state['izinler']=aysonu_izin_birlestir(pending,relevant)
+            state['gorevler']=st.session_state.get('aysonu_gorev_taslak',state['gorevler'])
+            st.session_state['aysonu_import_bilgi']=f'{len(relevant)} kayıt ilgili ay/personel için alındı; {len(rows)-len(relevant)} kayıt bu ayın veya personel listesinin dışında kaldı.'
+            st.session_state['aysonu_rev']=rev+1;st.rerun()
+        except Exception as e: st.error(str(e))
+    if st.session_state.get('aysonu_import_bilgi'): st.info(st.session_state['aysonu_import_bilgi'])
+    if st.session_state.get('aysonu_aktarilmayan'):
+        with st.expander('Bu aya / personel listesine alınmayan Excel kayıtları'):
+            st.dataframe(pd.DataFrame(st.session_state['aysonu_aktarilmayan']),hide_index=True)
+    ld=pd.DataFrame(state['izinler'],columns=AYSONU_IZIN_SUTUNLARI)
+    ld['Başlangıç']=pd.to_datetime(ld['Başlangıç']).dt.date
+    edited=st.data_editor(ld,num_rows='dynamic',hide_index=True,use_container_width=True,key=f'aysonu_izin_editor_{rev}',
+        column_config={'Personel':st.column_config.SelectboxColumn(options=people,required=True),
+        'Başlangıç':st.column_config.DateColumn(format='DD.MM.YYYY',required=True),
+        'Gün Sayısı':st.column_config.NumberColumn(min_value=1,step=1,required=True),
+        'Kod':st.column_config.SelectboxColumn(options=AYSONU_KODLAR,required=True)})
+    leaves=edited.to_dict('records');st.session_state['aysonu_izin_taslak']=leaves
+    st.subheader('Gerçekleşen nöbet listesi')
+    st.caption('Personeli doğrudan değiştirin; Acil alanı görev satırında kalır. Satır ekleyebilir veya silebilirsiniz. Takas için aşağıdan iki satır seçebilirsiniz.')
+    td=pd.DataFrame(state['gorevler'],columns=AYSONU_GOREV_SUTUNLARI)
+    td['Tarih']=pd.to_datetime(td['Tarih']).dt.date
+    td['Acil']=td['Acil'].astype(bool)
+    tasks_df=st.data_editor(td,num_rows='dynamic',hide_index=False,use_container_width=True,key=f'aysonu_gorev_editor_{rev}',
+        column_config={'Tarih':st.column_config.DateColumn(format='DD.MM.YYYY',required=True),
+        'Personel':st.column_config.SelectboxColumn(options=people,required=True),
+        'Birim':st.column_config.SelectboxColumn(options=['PCR','Mikro','Kültür'],required=True),
+        'Görev':st.column_config.SelectboxColumn(options=['24s','Kültür 8s'],required=True),
+        'Acil':st.column_config.CheckboxColumn()})
+    tasks=tasks_df.to_dict('records');st.session_state['aysonu_gorev_taslak']=tasks
+    if len(tasks)>1:
+        label=lambda i:f"{i}: {tasks[i]['Tarih']} — {tasks[i]['Birim']} — {tasks[i]['Personel']}"
+        a,b=st.columns(2)
+        i=a.selectbox('Takas: birinci nöbet',range(len(tasks)),format_func=label,key=f'aysonu_takas_a_{rev}')
+        j=b.selectbox('Takas: ikinci nöbet',range(len(tasks)),index=1,format_func=label,key=f'aysonu_takas_b_{rev}')
+        if st.button('İki nöbetin personelini değiştir'):
+            tasks[i]['Personel'],tasks[j]['Personel']=tasks[j]['Personel'],tasks[i]['Personel']
+            state['gorevler']=tasks;state['izinler']=leaves
+            st.session_state['aysonu_rev']=rev+1;st.rerun()
+    with st.expander('İlk plan ve değişiklik özeti'):
+        st.write(f"İlk plan: {len(state['ilk_gorevler'])} görev. Güncel tablo: {len(tasks)} görev. İzin/rapor: {len(leaves)} kayıt.")
+        old=[(r['Tarih'],r['Birim'],r['Görev'],r['Personel'],r['Acil']) for r in state['ilk_gorevler']]
+        now=[(str(r['Tarih']),r['Birim'],r['Görev'],r['Personel'],r['Acil']) for r in tasks]
+        st.write('Kaldırılan / değiştirilen görevler');st.dataframe(pd.DataFrame([r for r in old if r not in now],columns=AYSONU_GOREV_SUTUNLARI),hide_index=True)
+        st.write('Eklenen / yeni görevler');st.dataframe(pd.DataFrame([r for r in now if r not in old],columns=AYSONU_GOREV_SUTUNLARI),hide_index=True)
+    signature=hashlib.sha256(json.dumps([c,tasks,leaves],sort_keys=True,default=str,ensure_ascii=False).encode()).hexdigest()
+    if st.button('Değişiklikleri uygula ve tüm çıktıları güncelle',type='primary'):
+        try:
+            result,newstate,preview,info=aysonu_hesapla(state,tasks,leaves)
+            st.session_state['aysonu_state']=newstate
+            st.session_state['aysonu_output']={'excel':result,'preview':preview,'info':info,'signature':signature}
+            st.success('İzin/rapor ve nöbet değişiklikleri tüm tablolara işlendi.')
+        except Exception as e: st.error(str(e))
+    result=st.session_state.get('aysonu_output')
+    if result:
+        stale=result['signature']!=signature
+        if stale: st.info('Tabloda yeni düzenlemeler var. Güncel Excel için Değişiklikleri uygula düğmesine basın.')
+        for msg in result['info']: st.info(msg)
+        st.download_button('Güncel tüm tabloları Excel indir',result['excel'],
+            file_name=f"Mikrobiyoloji Nobet_Puantaj_{c['yil']}_{c['ay']:02d}_Ay_Sonu.xlsx",disabled=stale,
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',on_click='ignore')
+        st.caption('Bu Excel dosyası izin/raporları, ilk planı ve düzenlenmiş görevleri de saklar. Daha sonra 7. bölümde açarak devam edebilirsiniz.')
+        for title,df in result['preview'].items():
+            with st.expander(title): st.dataframe(df.astype(str),use_container_width=True,hide_index=True)
+    # Taslak yedeği: uygulamadan çıkmadan indirilebilir, hesaplama gerekmez.
+    draft=deepcopy(state); draft['gorevler']=tasks;draft['izinler']=leaves
+    st.download_button('Düzenleme taslağını kaydet (JSON)',json.dumps(draft,ensure_ascii=False,default=str).encode(),
+        file_name=f"Ay_Sonu_Taslak_{c['yil']}_{c['ay']:02d}.json",mime='application/json',on_click='ignore')
+
+
+def personel_hesap_motoru(context, durumlar=None):
+    TUM_PERSONEL_VERISI = context["TUM_PERSONEL_VERISI"]
+    gecmis_ay_kultur_ni = context["gecmis_ay_kultur_ni"]
+    ilk_mesai_gunu = context["ilk_mesai_gunu"]
+    gecmis_ay_son_gun_normal = context["gecmis_ay_son_gun_normal"]
+    gecmis_ay_son_gun_acil = context["gecmis_ay_son_gun_acil"]
+    gecmis_istatistik = context["gecmis_istatistik"]
+    gecmis_acil_istatistik = context["gecmis_acil_istatistik"]
+    gecmis_kultur8_istatistik = context["gecmis_kultur8_istatistik"]
+    durumlar = durumlar or {}
+    gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
+    def get_prev(p_name, category):
+        p_norm = tr_norm(p_name)
+        for key, val in gecmis_istatistik.items():
+            if tr_norm(key) == p_norm:
+                return val.get(category, 0)
+        return 0
+
+    def get_prev_acil(p_name):
+        p_norm = tr_norm(p_name)
+        for key, val in gecmis_acil_istatistik.items():
+            if tr_norm(key) == p_norm:
+                return val
+        return 0
+
+    def get_prev_kultur8(p_name):
+        p_norm = tr_norm(p_name)
+        for key, val in gecmis_kultur8_istatistik.items():
+            if tr_norm(key) == p_norm:
+                return val
+        return 0
+
+    def ortak_gun_statusu(dt, yil, ay, tam_tatil=(), yarim_tatil=()):
+        return aysonu_mesai(context, dt)
+
+    def is_day_off(yil, ay, day, resmi_tatil_gunleri):
+        dt = datetime.date(yil, ay, day)
+        return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
+
+    def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+        return sum(ortak_gun_statusu(datetime.date(yil,ay,d), yil, ay, resmi_tatil_gunleri,
+                                   yarim_gun_tatil_gunleri) for d in range(1,gun_sayisi+1))
+
+    def calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+        dt = datetime.date(yil, ay, day)
+        next_dt = dt + datetime.timedelta(days=1)
+        current = ortak_gun_statusu(dt,yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+        next_status = ortak_gun_statusu(next_dt,yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+        next_off = next_status == 0
+        if day in yarim_gun_tatil_gunleri:
+            return 12, 7
+        # Ay sonu normal mesai nöbetinde Nİ sonraki aya kalır.
+        # Ertesi gün tatil olsa da bu ay hakediş 12 gece + 4 normaldir.
+        if day == gun_sayisi and current == 8:
+            return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
+        if day == gun_sayisi and not next_off:
+            return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
+        if current == 0:
+            return (12,12) if next_off else (12,4)
+        if dt.weekday() < 4:
+            return (8,3) if next_status == 5 else (8,0)
+        return 12,4
+
+    def kultur_ni_gunleri(yil, ay, gun_sayisi, vardiyalar, resmi_tatil_gunleri):
+        ni_gunleri = set()
+        for vardiya in vardiyalar:
+            for day in range(vardiya + 1, gun_sayisi + 1):
+                if not is_day_off(yil, ay, day, resmi_tatil_gunleri):
+                    ni_gunleri.add(day)
+                    break
+        return ni_gunleri
+
+    def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, kultur_8s_vardiyalari=None):
+        aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+
+        toplam_calisma = 0
+        norm_gece = 0
+        norm_normal = 0
+        risk_gece = 0
+        risk_normal = 0
+        bayram_gece = bayram_normal = risk_bayram_gece = risk_bayram_normal = 0
+
+        # 1. Ham Nöbet Saatlerinin Dağıtılması
+        for d in range(1, gun_sayisi + 1):
+            val = str(p_row_dict.get(str(d), "")).strip()
+
+            # Kültür 8s dahil çalışılan saatler toplama girer.
+            # İlk mesai günündeki Nİ=0; ayrıca 8 saat düşülmez.
+            if val in ["8", "5", "16", "19", "11", "24"]:
+                toplam_calisma += int(val)
+
+            dt = datetime.date(yil, ay, d)
+            weekday = dt.weekday()
+            is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
+            is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else False
+            is_risk = d in acil_days_set
+
+            if val == "24":
+                g_saat, n_saat = calculate_nobet_hakedis(
+                    yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
+
+                g_saat, n_saat, bg_saat, bn_saat = bayram_saat_ayrimi(
+                    yil,ay,d,g_saat,n_saat,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+                if is_risk:
+                    risk_gece += g_saat
+                    risk_normal += n_saat
+                    risk_bayram_gece += bg_saat
+                    risk_bayram_normal += bn_saat
+                else:
+                    norm_gece += g_saat
+                    norm_normal += n_saat
+                    bayram_gece += bg_saat
+                    bayram_normal += bn_saat
+
+        # Kültür 8s karşılığı Nİ sonraki aya kalıyorsa, bu 8s mevcut
+        # ayın ödeme hesabına girmez. Günlük hücrede 8 olarak kalır.
+        for vardiya in set(kultur_8s_vardiyalari or ()):
+            if str(p_row_dict.get(str(vardiya), "")).strip() == "8" and not kultur_ni_gunleri(
+                    yil, ay, gun_sayisi, {vardiya}, resmi_tatil_gunleri):
+                toplam_calisma -= 8
+
+        # Önceki ayın ödeme hesabından ayrılan Kültür 8s, bu ay Nİ
+        # kullanıldığında mesai karşılığı olarak eklenir; nöbet ücreti değildir.
+        if p_name in gecmis_ay_kultur_ni and ilk_mesai_gunu is not None:
+            if str(p_row_dict.get(str(ilk_mesai_gunu), "")).strip() == "Nİ":
+                toplam_calisma += 8
+
+        # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
+        is_devir_normal = p_name in gecmis_ay_son_gun_normal
+        is_devir_acil = p_name in gecmis_ay_son_gun_acil
+
+        # Devir mahsubu yalnızca ayın ilk gününde mesai yerine Nİ
+        # kullanıldığında doğar. Hafta sonu/resmi tatilde T veya Nİ,
+        # aylık mesaiden saat eksiltmediği için ayrıca mahsup edilmez.
+        devir_ni_mesaisi = (
+            str(p_row_dict.get("1", "")).strip() == "Nİ"
+            and not is_day_off(yil, ay, 1, resmi_tatil_gunleri)
+        )
+        if (is_devir_normal or is_devir_acil) and devir_ni_mesaisi:
+            dusulecek_saat = 5 if 1 in yarim_gun_tatil_gunleri else 8
+            if is_devir_acil:
+                # Acil devir yalnız riskli hakedişten düşülür.
+                risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
+                    risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat)
+            else:
+                # Normal devir yalnız normal hakedişten düşülür.
+                norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
+                    norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat)
+
+        aylik_hedef_saat -= sum(
+            ortak_gun_statusu(datetime.date(yil,ay,d),yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+            for d in range(1,gun_sayisi+1)
+            if str(p_row_dict.get(str(d), "")) in AYSONU_KODLAR)
+        fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
+
+        return {
+            "Toplam Çalışma Saati": toplam_calisma,
+            "Aylık Çalışma Saati": aylik_hedef_saat,
+            "Fazla Nöbet Saati": fazla_nobet,
+            "Normal_Gece": norm_gece,
+            "Normal_Normal": norm_normal,
+            "Riskli_Gece": risk_gece,
+            "Riskli_Normal": risk_normal,
+            "Bayram_Gece": bayram_gece, "Bayram_Normal": bayram_normal,
+            "Riskli_Bayram_Gece": risk_bayram_gece, "Riskli_Bayram_Normal": risk_bayram_normal,
+        }
+
+    def ortak_personel_gunluk_kayit(p, yil, ay, gun_sayisi, nobet_dict, kultur_8s_dict,
+                                   resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
+        row = {}
+        muaf = TUM_PERSONEL_VERISI[p]["muaf"]
+        shifts = nobet_dict.get(p,set())
+        k8 = kultur_8s_dict.get(p,set())
+        k8_ni = kultur_ni_gunleri(yil,ay,gun_sayisi,k8,resmi_tatil_gunleri)
+        for d in range(1,gun_sayisi+1):
+            status = ortak_gun_statusu(datetime.date(yil,ay,d),yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+            if d in shifts:
+                val = "24"
+            elif d in k8:
+                val = "8"
+            elif muaf and not shifts and not k8:
+                val = str(status) if status else "T"
+            elif p in gecmis_ay_kultur_ni and d == ilk_mesai_gunu:
+                val = "Nİ"
+            elif d == 1 and p in gecmis_ay_son_gun_nobetcileri:
+                val = "T" if status==0 else "Nİ"
+            elif d in shifts:
+                val = "24"
+            elif d in k8:
+                val = "8"
+            elif d-1 in shifts:
+                val = "T" if status==0 else "Nİ"
+            elif d in k8_ni:
+                val = "Nİ"
+            else:
+                val = str(status) if status else "T"
+            row[str(d)] = durumlar.get((p,d), val)
+        return row
+
+    def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
+        wb = openpyxl.Workbook()
+        font_title = Font(name="Calibri", size=12, bold=True)
+        font_header = Font(name="Calibri", size=10, bold=True)
+        font_body = Font(name="Calibri", size=9)
+        font_bold = Font(name="Calibri", size=9, bold=True)
+        font_ni = Font(name="Calibri", size=9, bold=True)
+        font_24 = Font(name="Calibri", size=9, bold=True)
+
+        fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
+        fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
+        fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")
+        fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+        fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+        thin_side = Side(style="thin", color="000000")
+        border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+        align_center = Alignment(horizontal="center", vertical="center")
+        align_left = Alignment(horizontal="left", vertical="center")
+        align_vertical_header = Alignment(horizontal="center", vertical="center", text_rotation=90, wrap_text=True)
+
+        # 1. SEKME
+        ws1 = wb.active
+        ws1.title = "Aylık Görev Listesi"
+        ws1.views.sheetView[0].showGridLines = True
+        ws1.cell(row=1, column=1, value=f"{yil} yılı {ay}. Ay Mikrobiyoloji Laboratuvarı Nöbet Çizelgesi").font = font_title
+
+        headers1 = ["Tarih", "Gün", "PCR", "Mikro", "Kültür", "Kültür (8s Vardiya)"]
+        for c_idx, h in enumerate(headers1, 1):
+            cell = ws1.cell(row=3, column=c_idx, value=h)
+            cell.font, cell.fill, cell.alignment, cell.border = font_header, fill_header, align_center, border_cell
+
+        for d in range(1, gun_sayisi + 1):
+            r = d + 3
+            tarih = datetime.date(yil, ay, d)
+            pcr_list, mikro_list, kultur_list, kultur_8s_list = [], [], [], []
+            for p in nobetci_personeller:
+                p_unit = context.get("gorev_birimleri", {}).get(f"{p}|{d}", TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro"))
+                is_24 = d in nobet_dict.get(p, set())
+                is_8s = d in kultur_8s_dict.get(p, set())
+                is_acil = d in acil_nobet_dict.get(p, set())
+
+                if is_24:
+                    p_text = f"{p} (Acil)" if is_acil else p
+                    if p_unit == "PCR": pcr_list.append(p_text)
+                    elif p_unit == "Mikro": mikro_list.append(p_text)
+                    elif p_unit == "Kültür": kultur_list.append(p_text)
+                elif is_8s: kultur_8s_list.append(p)
+
+            c1 = ws1.cell(row=r, column=1, value=tarih.strftime("%d.%m.%Y"))
+            c2 = ws1.cell(row=r, column=2, value=tr_gunler[tarih.weekday()])
+            c3 = ws1.cell(row=r, column=3, value=", ".join(pcr_list))
+            c4 = ws1.cell(row=r, column=4, value=", ".join(mikro_list))
+            c5 = ws1.cell(row=r, column=5, value=", ".join(kultur_list))
+            c6 = ws1.cell(row=r, column=6, value=", ".join(kultur_8s_list))
+
+            for c in [c1, c2, c3, c4, c5, c6]:
+                c.font, c.border = font_body, border_cell
+                c.alignment = align_center if c in [c1, c2] else align_left
+                if is_day_off(yil, ay, d, resmi_tatil_gunleri): c.fill = fill_grey_weekend
+
+        for c_let, w in zip(["A", "B", "C", "D", "E", "F"], [13, 13, 25, 25, 25, 25]):
+            ws1.column_dimensions[c_let].width = w
+
+        # 2. SEKME
+        ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
+        ws2.views.sheetView[0].showGridLines = True
+        gunler_listesi = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+
+        ws2.merge_cells("A1:A2")
+        cell_a = ws2.cell(row=1, column=1, value="AD SOYAD")
+        cell_a.font, cell_a.fill, cell_a.alignment, cell_a.border = font_header, fill_header, align_center, border_cell
+
+        ws2.merge_cells("B1:B2")
+        cell_b = ws2.cell(row=1, column=2, value="Birim")
+        cell_b.font, cell_b.fill, cell_b.alignment, cell_b.border = font_header, fill_header, align_center, border_cell
+
+        col_counter = 3
+        for g in gunler_listesi:
+            ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
+            top_cell = ws2.cell(row=1, column=col_counter, value=g)
+            top_cell.font, top_cell.fill, top_cell.alignment = font_header, fill_header, align_center
+            for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
+                sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
+                sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
+            col_counter += 3
+
+        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=2, end_column=col_counter)
+        c_tn = ws2.cell(row=1, column=col_counter, value="T.NöbetSaati")
+        c_tn.font, c_tn.fill, c_tn.alignment, c_tn.border = font_header, fill_header, align_center, border_cell
+
+        col_counter += 1
+        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=2, end_column=col_counter)
+        c_tnb = ws2.cell(row=1, column=col_counter, value="TOPLAM NÖBET")
+        c_tnb.font, c_tnb.fill, c_tnb.alignment, c_tnb.border = font_header, fill_header, align_center, border_cell
+
+        col_counter += 1
+        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
+        top_acil = ws2.cell(row=1, column=col_counter, value="ACİL NÖBET (SAAT)")
+        top_acil.font, top_acil.fill, top_acil.alignment = font_header, fill_header, align_center
+        for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
+            sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
+            sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
+        col_counter += 3
+
+        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
+        top_k8 = ws2.cell(row=1, column=col_counter, value="KÜLTÜR 8S VARDİYA")
+        top_k8.font, top_k8.fill, top_k8.alignment = font_header, fill_header, align_center
+        for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
+            sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
+            sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
+
+        for r_idx in [1, 2]:
+            for c_idx in range(1, col_counter + 3):
+                ws2.cell(row=r_idx, column=c_idx).border = border_cell
+
+        for p_idx, p in enumerate(nobetci_personeller, 3):
+            p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
+            ws2.cell(row=p_idx, column=1, value=p).alignment = align_left
+            ws2.cell(row=p_idx, column=1).font, ws2.cell(row=p_idx, column=1).border = font_body, border_cell
+            ws2.cell(row=p_idx, column=2, value=p_birim).alignment = align_center
+            ws2.cell(row=p_idx, column=2).font, ws2.cell(row=p_idx, column=2).border = font_body, border_cell
+
+            bu_ay_gunler = {g: 0 for g in gunler_listesi}
+            bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
+            bu_ay_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in nobet_dict.get(p, set()))
+            for d in nobet_dict.get(p, set()):
+                w = datetime.date(yil, ay, d).weekday()
+                bu_ay_gunler[tr_gunler[w]] += 1
+
+            c_i = 3
+            for g in gunler_listesi:
+                devir, bu_ay = int(get_prev(p, g)), int(bu_ay_gunler[g])
+                for v in [devir, bu_ay, devir + bu_ay]:
+                    cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
+                    cell.font, cell.alignment, cell.border = font_body, align_center, border_cell
+                    c_i += 1
+
+            cell_saat = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_saat))
+            cell_saat.font, cell_saat.alignment, cell_saat.border = font_bold, align_center, border_cell
+            c_i += 1
+
+            cell_nobet = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_toplam_nobet))
+            cell_nobet.font, cell_nobet.alignment, cell_nobet.border = font_bold, align_center, border_cell
+            c_i += 1
+
+            bu_ay_acil_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in acil_nobet_dict.get(p, set()))
+            acil_devir = int(get_prev_acil(p))
+            for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_devir + bu_ay_acil_saat]):
+                cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
+                cell.font = font_bold if idx == 2 else font_body
+                cell.alignment, cell.border = align_center, border_cell
+            c_i += 3
+
+            bu_ay_k8_sayisi = len(kultur_8s_dict.get(p, set()))
+            k8_devir = int(get_prev_kultur8(p))
+            for idx, v in enumerate([k8_devir, bu_ay_k8_sayisi, k8_devir + bu_ay_k8_sayisi]):
+                cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
+                cell.font = font_bold if idx == 2 else font_body
+                cell.alignment, cell.border = align_center, border_cell
+
+        ws2.column_dimensions["A"].width = 25
+        ws2.column_dimensions["B"].width = 12
+
+        # 3. SEKME
+        ws3 = wb.create_sheet("Puantaj Tablosu")
+        ws3.views.sheetView[0].showGridLines = True
+        ws3.row_dimensions[7].height = 48.75
+        ws3.row_dimensions[8].height = 60.75
+        header_font = Font(name="Times New Roman",size=12,bold=True)
+        sub_font = Font(name="Times New Roman",size=10)
+        header_align = Alignment(horizontal="center",vertical="center",wrap_text=True)
+        sub_align = Alignment(horizontal="center",vertical="center",text_rotation=90,wrap_text=True)
+        off_days = {d for d in range(1,gun_sayisi+1) if is_day_off(yil,ay,d,resmi_tatil_gunleri)}
+        ek_basliklar = ["Toplam çalışma saati","Aylık Çalışma Saati","Fazla nöbet saati",
+                       "Normal Nöbet - Artırımlı (Gece)","Normal Nöbet - Artırımsız (Normal)",
+                       "Riskli Nöbet - Artırımlı (Gece)","Riskli Nöbet - Artırımsız (Normal)",
+                       "Bayram Nöbet - Artırımlı (Gece)","Bayram Nöbet - Artırımsız (Normal)",
+                       "Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"]
+        start_col = gun_sayisi + 3
+        singles = [(1,"ADI SOYADI"),(2,"Branş")]+[(d+2,d) for d in range(1,gun_sayisi+1)]
+        singles += [(start_col+i,ek_basliklar[i]) for i in range(3)]
+        for c,value in singles:
+            ws3.merge_cells(start_row=7,start_column=c,end_row=8,end_column=c)
+            cell=ws3.cell(7,c,value)
+            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
+            cell.fill=fill_grey_weekend if c-2 in off_days and 3<=c<start_col else fill_white
+            ws3.cell(8,c).border=border_cell
+        for offset,label in [(3,"Normal Nöbet Saati"),(5,"Riskli nöbet saati"),
+                             (7,"Bayram Nöbet Saati"),(9,"Riskli bayram nöbet saati")]:
+            c=start_col+offset
+            ws3.merge_cells(start_row=7,start_column=c,end_row=7,end_column=c+1)
+            cell=ws3.cell(7,c,label)
+            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
+            ws3.cell(7,c+1).border=border_cell
+            for j,label2 in enumerate(["Artırımlı\n(Gece)","Artırımsız\n(Normal)"]):
+                cell=ws3.cell(8,c+j,label2)
+                cell.font,cell.alignment,cell.border=sub_font,sub_align,border_cell
+
+        gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
+
+        for idx, p in enumerate(tum_girilen_personeller):
+            r = 9 + idx
+            ws3.row_dimensions[r].height = 18
+            p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
+            is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
+
+            c_name = ws3.cell(row=r, column=1, value=p)
+            c_name.fill, c_name.font, c_name.alignment, c_name.border = fill_white, font_body, align_left, border_cell
+
+            c_unit = ws3.cell(row=r, column=2, value=p_birim)
+            c_unit.fill, c_unit.font, c_unit.alignment, c_unit.border = fill_white, font_body, align_center, border_cell
+
+            p_shifts = nobet_dict.get(p, set())
+            p_k8_shifts = kultur_8s_dict.get(p, set())
+            p_k8_ni = kultur_ni_gunleri(yil, ay, gun_sayisi, p_k8_shifts, resmi_tatil_gunleri)
+            p_acils = acil_nobet_dict.get(p, set())
+            p_row_dict = {}
+            gunluk_kayit = ortak_personel_gunluk_kayit(p,yil,ay,gun_sayisi,nobet_dict,kultur_8s_dict,
+                                                       resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
+
+            for day in range(1, gun_sayisi + 1):
+                col_idx = day + 2
+                cell = ws3.cell(row=r, column=col_idx)
+                cell.border, cell.alignment = border_cell, align_center
+                cell.fill = fill_grey_weekend if day in off_days else fill_white
+                dt = datetime.date(yil, ay, day)
+
+                val = gunluk_kayit[str(day)]
+                cell.value = int(val) if val.isdigit() else val
+                if val == "Nİ": cell.font = font_ni
+                elif val == "24":
+                    cell.font = font_24
+                    if day in p_acils: cell.fill = fill_bright_yellow
+                elif day in p_k8_shifts: cell.font = font_bold
+                else: cell.font = font_body
+
+                p_row_dict[str(day)] = str(cell.value)
+
+            m = calculate_personel_puantaj_metrikleri(p, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, p_k8_shifts)
+            metrik_values = [
+                int(m["Toplam Çalışma Saati"]), int(m["Aylık Çalışma Saati"]), int(m["Fazla Nöbet Saati"]),
+                int(m["Normal_Gece"]), int(m["Normal_Normal"]), int(m["Riskli_Gece"]), int(m["Riskli_Normal"]),
+                int(m["Bayram_Gece"]),int(m["Bayram_Normal"]),int(m["Riskli_Bayram_Gece"]),int(m["Riskli_Bayram_Normal"]),
+            ]
+
+            for m_idx, val in enumerate(metrik_values):
+                col_idx = start_col + m_idx
+                cell = ws3.cell(row=r, column=col_idx, value=val)
+                cell.font = font_bold if m_idx < 3 else font_body
+                cell.alignment, cell.border = align_center, border_cell
+                cell.fill = PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
+
+        summary_r = 9 + len(tum_girilen_personeller)
+        ws3.row_dimensions[summary_r].height = 20
+
+        c_sum_name = ws3.cell(row=summary_r, column=1, value="Hesaplanan Nöbet Saati")
+        c_sum_name.fill, c_sum_name.font, c_sum_name.alignment, c_sum_name.border = fill_green_bg, font_bold, align_left, border_cell
+
+        c_sum_unit = ws3.cell(row=summary_r, column=2, value="")
+        c_sum_unit.fill, c_sum_unit.font, c_sum_unit.alignment, c_sum_unit.border = fill_green_bg, font_bold, align_center, border_cell
+
+        for day in range(1, gun_sayisi + 1):
+            col_idx = day + 2
+            cell = ws3.cell(row=summary_r, column=col_idx, value=sum(calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)))
+            cell.font, cell.alignment, cell.border, cell.fill = font_bold, align_center, border_cell, fill_green_bg
+
+        for m_idx in range(len(ek_basliklar)):
+            c_i = start_col + m_idx
+            letter=get_column_letter(c_i)
+            formula=f"=SUM({letter}9:{letter}{summary_r-1})" if tum_girilen_personeller else "=0"
+            cell=ws3.cell(summary_r,c_i,formula)
+            cell.font,cell.alignment,cell.border=font_bold,align_center,border_cell
+            cell.fill=PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
+        ws3.column_dimensions["A"].width=23.140625
+        ws3.column_dimensions["B"].width=5.5703125
+        for d in range(1,gun_sayisi+1):
+            ws3.column_dimensions[get_column_letter(d+2)].width = (2.7109375 if d<=2 or 5<=d<=9 else 3.42578125 if d<=4 else 3.85546875)
+        for idx,width in enumerate([9.5703125,10.28515625]+[7.28515625]*9):
+            ws3.column_dimensions[get_column_letter(start_col+idx)].width=width
+
+        ws_devir = wb.create_sheet("Kültür Nİ Devir")
+        ws_devir.append(["Personel"])
+        for p, vardiyalar in kultur_8s_dict.items():
+            if any(not kultur_ni_gunleri(yil, ay, gun_sayisi, {d}, resmi_tatil_gunleri) for d in vardiyalar):
+                ws_devir.append([p])
+        ws_devir.sheet_state = "hidden"
+
+        ws_meta = wb.create_sheet("Sistem Metadata")
+        ws_meta.append(["Şema Sürümü", 2])
+        ws_meta.append(["Puantaj Görünüm Sürümü", 3])
+        ws_meta.append(["Dönem", f"{yil:04d}-{ay:02d}"])
+        ws_meta.sheet_state = "hidden"
+        ws_ids = wb.create_sheet("Personel Kimlikleri")
+        ws_ids.append(["Personel ID", "Personel", "Birim", "Muaf"])
+        for name in tum_girilen_personeller:
+            info = TUM_PERSONEL_VERISI[name]
+            ws_ids.append([info["id"], name, info["birim"], info["muaf"]])
+        ws_ids.sheet_state = "hidden"
+
+        mikrobiyoloji_ek_excel_formlari(wb, yil, ay, tum_girilen_personeller, acil_nobet_dict)
+        aysonu_json_yaz(wb, "Ay Sonu Bağlam", context)
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output
+
+    return generate_3_tab_excel, ortak_personel_gunluk_kayit, calculate_personel_puantaj_metrikleri, is_day_off, calculate_aylik_calisma_saati, calculate_nobet_hakedis, kultur_ni_gunleri
+
 # MODÜL SEÇİMİ (SIDEBAR NAVİGASYON)
 # ==========================================
 st.sidebar.title("🏥 Mikrobiyoloji Lab.")
@@ -895,7 +1767,8 @@ secilen_modul = st.sidebar.radio(
         "3. Asistan Dr. Çalışma Listesi",
         "4. Eğitici Destekleme Puan Çizelgesi",
         "5. Uz. Dr. Puantaj Listesi",
-        "6. As. Dr. Puantaj Listesi"
+        "6. As. Dr. Puantaj Listesi",
+        "7. Ay Sonu Düzenleme"
     ]
 )
 st.sidebar.markdown("---")
@@ -1580,468 +2453,9 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             ensure_ascii=False, indent=2).encode("utf-8"),
             file_name=f"Nobet_Ayarlari_{yil}_{ay:02d}.json", mime="application/json")
 
-    def is_day_off(yil, ay, day, resmi_tatil_gunleri):
-        dt = datetime.date(yil, ay, day)
-        return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
-
-    def calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-        return sum(ortak_gun_statusu(datetime.date(yil,ay,d), yil, ay, resmi_tatil_gunleri,
-                                   yarim_gun_tatil_gunleri) for d in range(1,gun_sayisi+1))
-
-    def calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-        dt = datetime.date(yil, ay, day)
-        next_dt = dt + datetime.timedelta(days=1)
-        current = ortak_gun_statusu(dt,yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
-        next_status = ortak_gun_statusu(next_dt,yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
-        next_off = next_status == 0
-        if day in yarim_gun_tatil_gunleri:
-            return 12, 7
-        # Ay sonu normal mesai nöbetinde Nİ sonraki aya kalır.
-        # Ertesi gün tatil olsa da bu ay hakediş 12 gece + 4 normaldir.
-        if day == gun_sayisi and current == 8:
-            return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
-        if day == gun_sayisi and not next_off:
-            return (8,3) if dt.weekday()<4 and next_status==5 else (12,4)
-        if current == 0:
-            return (12,12) if next_off else (12,4)
-        if dt.weekday() < 4:
-            return (8,3) if next_status == 5 else (8,0)
-        return 12,4
-
-    def kultur_ni_gunleri(yil, ay, gun_sayisi, vardiyalar, resmi_tatil_gunleri):
-        ni_gunleri = set()
-        for vardiya in vardiyalar:
-            for day in range(vardiya + 1, gun_sayisi + 1):
-                if not is_day_off(yil, ay, day, resmi_tatil_gunleri):
-                    ni_gunleri.add(day)
-                    break
-        return ni_gunleri
-
-    def calculate_personel_puantaj_metrikleri(p_name, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, acil_days_set, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, kultur_8s_vardiyalari=None):
-        aylik_hedef_saat = calculate_aylik_calisma_saati(yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-
-        toplam_calisma = 0
-        norm_gece = 0
-        norm_normal = 0
-        risk_gece = 0
-        risk_normal = 0
-        bayram_gece = bayram_normal = risk_bayram_gece = risk_bayram_normal = 0
-
-        # 1. Ham Nöbet Saatlerinin Dağıtılması
-        for d in range(1, gun_sayisi + 1):
-            val = str(p_row_dict.get(str(d), "")).strip()
-
-            # Kültür 8s dahil çalışılan saatler toplama girer.
-            # İlk mesai günündeki Nİ=0; ayrıca 8 saat düşülmez.
-            if val in ["8", "5", "16", "19", "11", "24"]:
-                toplam_calisma += int(val)
-
-            dt = datetime.date(yil, ay, d)
-            weekday = dt.weekday()
-            is_off = is_day_off(yil, ay, d, resmi_tatil_gunleri)
-            is_next_day_off = is_day_off(yil, ay, d + 1, resmi_tatil_gunleri) if d < gun_sayisi else False
-            is_risk = d in acil_days_set
-
-            if val == "24":
-                g_saat, n_saat = calculate_nobet_hakedis(
-                    yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)
-
-                g_saat, n_saat, bg_saat, bn_saat = bayram_saat_ayrimi(
-                    yil,ay,d,g_saat,n_saat,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
-                if is_risk:
-                    risk_gece += g_saat
-                    risk_normal += n_saat
-                    risk_bayram_gece += bg_saat
-                    risk_bayram_normal += bn_saat
-                else:
-                    norm_gece += g_saat
-                    norm_normal += n_saat
-                    bayram_gece += bg_saat
-                    bayram_normal += bn_saat
-
-        # Kültür 8s karşılığı Nİ sonraki aya kalıyorsa, bu 8s mevcut
-        # ayın ödeme hesabına girmez. Günlük hücrede 8 olarak kalır.
-        for vardiya in set(kultur_8s_vardiyalari or ()):
-            if str(p_row_dict.get(str(vardiya), "")).strip() == "8" and not kultur_ni_gunleri(
-                    yil, ay, gun_sayisi, {vardiya}, resmi_tatil_gunleri):
-                toplam_calisma -= 8
-
-        # Önceki ayın ödeme hesabından ayrılan Kültür 8s, bu ay Nİ
-        # kullanıldığında mesai karşılığı olarak eklenir; nöbet ücreti değildir.
-        if p_name in gecmis_ay_kultur_ni and ilk_mesai_gunu is not None:
-            if str(p_row_dict.get(str(ilk_mesai_gunu), "")).strip() == "Nİ":
-                toplam_calisma += 8
-
-        # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
-        is_devir_normal = p_name in gecmis_ay_son_gun_normal
-        is_devir_acil = p_name in gecmis_ay_son_gun_acil
-
-        # Devir mahsubu yalnızca ayın ilk gününde mesai yerine Nİ
-        # kullanıldığında doğar. Hafta sonu/resmi tatilde T veya Nİ,
-        # aylık mesaiden saat eksiltmediği için ayrıca mahsup edilmez.
-        devir_ni_mesaisi = (
-            str(p_row_dict.get("1", "")).strip() == "Nİ"
-            and not is_day_off(yil, ay, 1, resmi_tatil_gunleri)
-        )
-        if (is_devir_normal or is_devir_acil) and devir_ni_mesaisi:
-            dusulecek_saat = 5 if 1 in yarim_gun_tatil_gunleri else 8
-            if is_devir_acil:
-                # Acil devir yalnız riskli hakedişten düşülür.
-                risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
-                    risk_gece, risk_normal, risk_bayram_gece, risk_bayram_normal, dusulecek_saat)
-            else:
-                # Normal devir yalnız normal hakedişten düşülür.
-                norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat = bayramli_personel_mahsup(
-                    norm_gece, norm_normal, bayram_gece, bayram_normal, dusulecek_saat)
-
-        fazla_nobet = max(0, toplam_calisma - aylik_hedef_saat)
-
-        return {
-            "Toplam Çalışma Saati": toplam_calisma,
-            "Aylık Çalışma Saati": aylik_hedef_saat,
-            "Fazla Nöbet Saati": fazla_nobet,
-            "Normal_Gece": norm_gece,
-            "Normal_Normal": norm_normal,
-            "Riskli_Gece": risk_gece,
-            "Riskli_Normal": risk_normal,
-            "Bayram_Gece": bayram_gece, "Bayram_Normal": bayram_normal,
-            "Riskli_Bayram_Gece": risk_bayram_gece, "Riskli_Bayram_Normal": risk_bayram_normal,
-        }
-
-    def ortak_personel_gunluk_kayit(p, yil, ay, gun_sayisi, nobet_dict, kultur_8s_dict,
-                                   resmi_tatil_gunleri, yarim_gun_tatil_gunleri):
-        row = {}
-        muaf = TUM_PERSONEL_VERISI[p]["muaf"]
-        shifts = nobet_dict.get(p,set())
-        k8 = kultur_8s_dict.get(p,set())
-        k8_ni = kultur_ni_gunleri(yil,ay,gun_sayisi,k8,resmi_tatil_gunleri)
-        for d in range(1,gun_sayisi+1):
-            status = ortak_gun_statusu(datetime.date(yil,ay,d),yil,ay,resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
-            if muaf:
-                val = str(status) if status else "T"
-            elif p in gecmis_ay_kultur_ni and d == ilk_mesai_gunu:
-                val = "Nİ"
-            elif d == 1 and p in gecmis_ay_son_gun_nobetcileri:
-                val = "T" if status==0 else "Nİ"
-            elif d in shifts:
-                val = "24"
-            elif d in k8:
-                val = "8"
-            elif d-1 in shifts:
-                val = "T" if status==0 else "Nİ"
-            elif d in k8_ni:
-                val = "Nİ"
-            else:
-                val = str(status) if status else "T"
-            row[str(d)] = val
-        return row
-
-    def generate_3_tab_excel(yil, ay, nobetci_personeller, tum_girilen_personeller, nobet_dict, kultur_8s_dict, acil_nobet_dict, gecmis_istatistik, gecmis_acil_istatistik, gecmis_kultur8_istatistik, gun_sayisi, birim_secimi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil):
-        wb = openpyxl.Workbook()
-        font_title = Font(name="Calibri", size=12, bold=True)
-        font_header = Font(name="Calibri", size=10, bold=True)
-        font_body = Font(name="Calibri", size=9)
-        font_bold = Font(name="Calibri", size=9, bold=True)
-        font_ni = Font(name="Calibri", size=9, bold=True)
-        font_24 = Font(name="Calibri", size=9, bold=True)
-
-        fill_header = PatternFill(start_color="C5D9A4", end_color="C5D9A4", fill_type="solid")
-        fill_green_bg = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
-        fill_grey_weekend = PatternFill(start_color="A6A6A6", end_color="A6A6A6", fill_type="solid")
-        fill_bright_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-        fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-
-        thin_side = Side(style="thin", color="000000")
-        border_cell = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
-        align_center = Alignment(horizontal="center", vertical="center")
-        align_left = Alignment(horizontal="left", vertical="center")
-        align_vertical_header = Alignment(horizontal="center", vertical="center", text_rotation=90, wrap_text=True)
-
-        # 1. SEKME
-        ws1 = wb.active
-        ws1.title = "Aylık Görev Listesi"
-        ws1.views.sheetView[0].showGridLines = True
-        ws1.cell(row=1, column=1, value=f"{yil} yılı {ay}. Ay Mikrobiyoloji Laboratuvarı Nöbet Çizelgesi").font = font_title
-
-        headers1 = ["Tarih", "Gün", "PCR", "Mikro", "Kültür", "Kültür (8s Vardiya)"]
-        for c_idx, h in enumerate(headers1, 1):
-            cell = ws1.cell(row=3, column=c_idx, value=h)
-            cell.font, cell.fill, cell.alignment, cell.border = font_header, fill_header, align_center, border_cell
-
-        for d in range(1, gun_sayisi + 1):
-            r = d + 3
-            tarih = datetime.date(yil, ay, d)
-            pcr_list, mikro_list, kultur_list, kultur_8s_list = [], [], [], []
-            for p in nobetci_personeller:
-                p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
-                is_24 = d in nobet_dict.get(p, set())
-                is_8s = d in kultur_8s_dict.get(p, set())
-                is_acil = d in acil_nobet_dict.get(p, set())
-
-                if is_24:
-                    p_text = f"{p} (Acil)" if is_acil else p
-                    if p_unit == "PCR": pcr_list.append(p_text)
-                    elif p_unit == "Mikro": mikro_list.append(p_text)
-                    elif p_unit == "Kültür": kultur_list.append(p_text)
-                elif is_8s: kultur_8s_list.append(p)
-
-            c1 = ws1.cell(row=r, column=1, value=tarih.strftime("%d.%m.%Y"))
-            c2 = ws1.cell(row=r, column=2, value=tr_gunler[tarih.weekday()])
-            c3 = ws1.cell(row=r, column=3, value=", ".join(pcr_list))
-            c4 = ws1.cell(row=r, column=4, value=", ".join(mikro_list))
-            c5 = ws1.cell(row=r, column=5, value=", ".join(kultur_list))
-            c6 = ws1.cell(row=r, column=6, value=", ".join(kultur_8s_list))
-
-            for c in [c1, c2, c3, c4, c5, c6]:
-                c.font, c.border = font_body, border_cell
-                c.alignment = align_center if c in [c1, c2] else align_left
-                if is_day_off(yil, ay, d, resmi_tatil_gunleri): c.fill = fill_grey_weekend
-
-        for c_let, w in zip(["A", "B", "C", "D", "E", "F"], [13, 13, 25, 25, 25, 25]):
-            ws1.column_dimensions[c_let].width = w
-
-        # 2. SEKME
-        ws2 = wb.create_sheet("İstatistik & Mesai Yükü")
-        ws2.views.sheetView[0].showGridLines = True
-        gunler_listesi = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
-
-        ws2.merge_cells("A1:A2")
-        cell_a = ws2.cell(row=1, column=1, value="AD SOYAD")
-        cell_a.font, cell_a.fill, cell_a.alignment, cell_a.border = font_header, fill_header, align_center, border_cell
-
-        ws2.merge_cells("B1:B2")
-        cell_b = ws2.cell(row=1, column=2, value="Birim")
-        cell_b.font, cell_b.fill, cell_b.alignment, cell_b.border = font_header, fill_header, align_center, border_cell
-
-        col_counter = 3
-        for g in gunler_listesi:
-            ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
-            top_cell = ws2.cell(row=1, column=col_counter, value=g)
-            top_cell.font, top_cell.fill, top_cell.alignment = font_header, fill_header, align_center
-            for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
-                sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
-                sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
-            col_counter += 3
-
-        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=2, end_column=col_counter)
-        c_tn = ws2.cell(row=1, column=col_counter, value="T.NöbetSaati")
-        c_tn.font, c_tn.fill, c_tn.alignment, c_tn.border = font_header, fill_header, align_center, border_cell
-
-        col_counter += 1
-        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=2, end_column=col_counter)
-        c_tnb = ws2.cell(row=1, column=col_counter, value="TOPLAM NÖBET")
-        c_tnb.font, c_tnb.fill, c_tnb.alignment, c_tnb.border = font_header, fill_header, align_center, border_cell
-
-        col_counter += 1
-        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
-        top_acil = ws2.cell(row=1, column=col_counter, value="ACİL NÖBET (SAAT)")
-        top_acil.font, top_acil.fill, top_acil.alignment = font_header, fill_header, align_center
-        for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
-            sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
-            sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
-        col_counter += 3
-
-        ws2.merge_cells(start_row=1, start_column=col_counter, end_row=1, end_column=col_counter + 2)
-        top_k8 = ws2.cell(row=1, column=col_counter, value="KÜLTÜR 8S VARDİYA")
-        top_k8.font, top_k8.fill, top_k8.alignment = font_header, fill_header, align_center
-        for idx, sub in enumerate(["Devir", "Bu Ay", "Toplam"]):
-            sub_cell = ws2.cell(row=2, column=col_counter + idx, value=sub)
-            sub_cell.font, sub_cell.fill, sub_cell.alignment, sub_cell.border = font_header, fill_green_bg, align_center, border_cell
-
-        for r_idx in [1, 2]:
-            for c_idx in range(1, col_counter + 3):
-                ws2.cell(row=r_idx, column=c_idx).border = border_cell
-
-        for p_idx, p in enumerate(nobetci_personeller, 3):
-            p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
-            ws2.cell(row=p_idx, column=1, value=p).alignment = align_left
-            ws2.cell(row=p_idx, column=1).font, ws2.cell(row=p_idx, column=1).border = font_body, border_cell
-            ws2.cell(row=p_idx, column=2, value=p_birim).alignment = align_center
-            ws2.cell(row=p_idx, column=2).font, ws2.cell(row=p_idx, column=2).border = font_body, border_cell
-
-            bu_ay_gunler = {g: 0 for g in gunler_listesi}
-            bu_ay_toplam_nobet = len(nobet_dict.get(p, set()))
-            bu_ay_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in nobet_dict.get(p, set()))
-            for d in nobet_dict.get(p, set()):
-                w = datetime.date(yil, ay, d).weekday()
-                bu_ay_gunler[tr_gunler[w]] += 1
-
-            c_i = 3
-            for g in gunler_listesi:
-                devir, bu_ay = int(get_prev(p, g)), int(bu_ay_gunler[g])
-                for v in [devir, bu_ay, devir + bu_ay]:
-                    cell = ws2.cell(row=p_idx, column=c_i, value=int(v))
-                    cell.font, cell.alignment, cell.border = font_body, align_center, border_cell
-                    c_i += 1
-
-            cell_saat = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_saat))
-            cell_saat.font, cell_saat.alignment, cell_saat.border = font_bold, align_center, border_cell
-            c_i += 1
-
-            cell_nobet = ws2.cell(row=p_idx, column=c_i, value=int(bu_ay_toplam_nobet))
-            cell_nobet.font, cell_nobet.alignment, cell_nobet.border = font_bold, align_center, border_cell
-            c_i += 1
-
-            bu_ay_acil_saat = sum(sum(calculate_nobet_hakedis(yil, ay, d, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)) for d in acil_nobet_dict.get(p, set()))
-            acil_devir = int(get_prev_acil(p))
-            for idx, v in enumerate([acil_devir, bu_ay_acil_saat, acil_devir + bu_ay_acil_saat]):
-                cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
-                cell.font = font_bold if idx == 2 else font_body
-                cell.alignment, cell.border = align_center, border_cell
-            c_i += 3
-
-            bu_ay_k8_sayisi = len(kultur_8s_dict.get(p, set()))
-            k8_devir = int(get_prev_kultur8(p))
-            for idx, v in enumerate([k8_devir, bu_ay_k8_sayisi, k8_devir + bu_ay_k8_sayisi]):
-                cell = ws2.cell(row=p_idx, column=c_i + idx, value=int(v))
-                cell.font = font_bold if idx == 2 else font_body
-                cell.alignment, cell.border = align_center, border_cell
-
-        ws2.column_dimensions["A"].width = 25
-        ws2.column_dimensions["B"].width = 12
-
-        # 3. SEKME
-        ws3 = wb.create_sheet("Puantaj Tablosu")
-        ws3.views.sheetView[0].showGridLines = True
-        ws3.row_dimensions[7].height = 48.75
-        ws3.row_dimensions[8].height = 60.75
-        header_font = Font(name="Times New Roman",size=12,bold=True)
-        sub_font = Font(name="Times New Roman",size=10)
-        header_align = Alignment(horizontal="center",vertical="center",wrap_text=True)
-        sub_align = Alignment(horizontal="center",vertical="center",text_rotation=90,wrap_text=True)
-        off_days = {d for d in range(1,gun_sayisi+1) if is_day_off(yil,ay,d,resmi_tatil_gunleri)}
-        ek_basliklar = ["Toplam çalışma saati","Aylık Çalışma Saati","Fazla nöbet saati",
-                       "Normal Nöbet - Artırımlı (Gece)","Normal Nöbet - Artırımsız (Normal)",
-                       "Riskli Nöbet - Artırımlı (Gece)","Riskli Nöbet - Artırımsız (Normal)",
-                       "Bayram Nöbet - Artırımlı (Gece)","Bayram Nöbet - Artırımsız (Normal)",
-                       "Riskli Bayram Nöbet - Artırımlı (Gece)","Riskli Bayram Nöbet - Artırımsız (Normal)"]
-        start_col = gun_sayisi + 3
-        singles = [(1,"ADI SOYADI"),(2,"Branş")]+[(d+2,d) for d in range(1,gun_sayisi+1)]
-        singles += [(start_col+i,ek_basliklar[i]) for i in range(3)]
-        for c,value in singles:
-            ws3.merge_cells(start_row=7,start_column=c,end_row=8,end_column=c)
-            cell=ws3.cell(7,c,value)
-            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
-            cell.fill=fill_grey_weekend if c-2 in off_days and 3<=c<start_col else fill_white
-            ws3.cell(8,c).border=border_cell
-        for offset,label in [(3,"Normal Nöbet Saati"),(5,"Riskli nöbet saati"),
-                             (7,"Bayram Nöbet Saati"),(9,"Riskli bayram nöbet saati")]:
-            c=start_col+offset
-            ws3.merge_cells(start_row=7,start_column=c,end_row=7,end_column=c+1)
-            cell=ws3.cell(7,c,label)
-            cell.font,cell.alignment,cell.border=header_font,header_align,border_cell
-            ws3.cell(7,c+1).border=border_cell
-            for j,label2 in enumerate(["Artırımlı\n(Gece)","Artırımsız\n(Normal)"]):
-                cell=ws3.cell(8,c+j,label2)
-                cell.font,cell.alignment,cell.border=sub_font,sub_align,border_cell
-
-        gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
-
-        for idx, p in enumerate(tum_girilen_personeller):
-            r = 9 + idx
-            ws3.row_dimensions[r].height = 18
-            p_birim = TUM_PERSONEL_VERISI.get(p, {}).get("birim", birim_secimi)
-            is_muaf = TUM_PERSONEL_VERISI.get(p, {}).get("muaf", False)
-
-            c_name = ws3.cell(row=r, column=1, value=p)
-            c_name.fill, c_name.font, c_name.alignment, c_name.border = fill_white, font_body, align_left, border_cell
-
-            c_unit = ws3.cell(row=r, column=2, value=p_birim)
-            c_unit.fill, c_unit.font, c_unit.alignment, c_unit.border = fill_white, font_body, align_center, border_cell
-
-            p_shifts = nobet_dict.get(p, set())
-            p_k8_shifts = kultur_8s_dict.get(p, set())
-            p_k8_ni = kultur_ni_gunleri(yil, ay, gun_sayisi, p_k8_shifts, resmi_tatil_gunleri)
-            p_acils = acil_nobet_dict.get(p, set())
-            p_row_dict = {}
-            gunluk_kayit = ortak_personel_gunluk_kayit(p,yil,ay,gun_sayisi,nobet_dict,kultur_8s_dict,
-                                                       resmi_tatil_gunleri,yarim_gun_tatil_gunleri)
-
-            for day in range(1, gun_sayisi + 1):
-                col_idx = day + 2
-                cell = ws3.cell(row=r, column=col_idx)
-                cell.border, cell.alignment = border_cell, align_center
-                cell.fill = fill_grey_weekend if day in off_days else fill_white
-                dt = datetime.date(yil, ay, day)
-
-                val = gunluk_kayit[str(day)]
-                cell.value = int(val) if val.isdigit() else val
-                if val == "Nİ": cell.font = font_ni
-                elif val == "24":
-                    cell.font = font_24
-                    if day in p_acils: cell.fill = fill_bright_yellow
-                elif day in p_k8_shifts: cell.font = font_bold
-                else: cell.font = font_body
-
-                p_row_dict[str(day)] = str(cell.value)
-
-            m = calculate_personel_puantaj_metrikleri(p, p_row_dict, yil, ay, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri, p_acils, kultur_8s_tatil_gunleri, gecmis_ay_son_gun_normal, gecmis_ay_son_gun_acil, p_k8_shifts)
-            metrik_values = [
-                int(m["Toplam Çalışma Saati"]), int(m["Aylık Çalışma Saati"]), int(m["Fazla Nöbet Saati"]),
-                int(m["Normal_Gece"]), int(m["Normal_Normal"]), int(m["Riskli_Gece"]), int(m["Riskli_Normal"]),
-                int(m["Bayram_Gece"]),int(m["Bayram_Normal"]),int(m["Riskli_Bayram_Gece"]),int(m["Riskli_Bayram_Normal"]),
-            ]
-
-            for m_idx, val in enumerate(metrik_values):
-                col_idx = start_col + m_idx
-                cell = ws3.cell(row=r, column=col_idx, value=val)
-                cell.font = font_bold if m_idx < 3 else font_body
-                cell.alignment, cell.border = align_center, border_cell
-                cell.fill = PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
-
-        summary_r = 9 + len(tum_girilen_personeller)
-        ws3.row_dimensions[summary_r].height = 20
-
-        c_sum_name = ws3.cell(row=summary_r, column=1, value="Hesaplanan Nöbet Saati")
-        c_sum_name.fill, c_sum_name.font, c_sum_name.alignment, c_sum_name.border = fill_green_bg, font_bold, align_left, border_cell
-
-        c_sum_unit = ws3.cell(row=summary_r, column=2, value="")
-        c_sum_unit.fill, c_sum_unit.font, c_sum_unit.alignment, c_sum_unit.border = fill_green_bg, font_bold, align_center, border_cell
-
-        for day in range(1, gun_sayisi + 1):
-            col_idx = day + 2
-            cell = ws3.cell(row=summary_r, column=col_idx, value=sum(calculate_nobet_hakedis(yil, ay, day, gun_sayisi, resmi_tatil_gunleri, yarim_gun_tatil_gunleri)))
-            cell.font, cell.alignment, cell.border, cell.fill = font_bold, align_center, border_cell, fill_green_bg
-
-        for m_idx in range(len(ek_basliklar)):
-            c_i = start_col + m_idx
-            letter=get_column_letter(c_i)
-            formula=f"=SUM({letter}9:{letter}{summary_r-1})" if tum_girilen_personeller else "=0"
-            cell=ws3.cell(summary_r,c_i,formula)
-            cell.font,cell.alignment,cell.border=font_bold,align_center,border_cell
-            cell.fill=PatternFill("solid",fgColor="A6A6A6") if m_idx<3 else fill_white
-        ws3.column_dimensions["A"].width=23.140625
-        ws3.column_dimensions["B"].width=5.5703125
-        for d in range(1,gun_sayisi+1):
-            ws3.column_dimensions[get_column_letter(d+2)].width = (2.7109375 if d<=2 or 5<=d<=9 else 3.42578125 if d<=4 else 3.85546875)
-        for idx,width in enumerate([9.5703125,10.28515625]+[7.28515625]*9):
-            ws3.column_dimensions[get_column_letter(start_col+idx)].width=width
-
-        ws_devir = wb.create_sheet("Kültür Nİ Devir")
-        ws_devir.append(["Personel"])
-        for p, vardiyalar in kultur_8s_dict.items():
-            if any(not kultur_ni_gunleri(yil, ay, gun_sayisi, {d}, resmi_tatil_gunleri) for d in vardiyalar):
-                ws_devir.append([p])
-        ws_devir.sheet_state = "hidden"
-
-        ws_meta = wb.create_sheet("Sistem Metadata")
-        ws_meta.append(["Şema Sürümü", 2])
-        ws_meta.append(["Puantaj Görünüm Sürümü", 3])
-        ws_meta.append(["Dönem", f"{yil:04d}-{ay:02d}"])
-        ws_meta.sheet_state = "hidden"
-        ws_ids = wb.create_sheet("Personel Kimlikleri")
-        ws_ids.append(["Personel ID", "Personel", "Birim", "Muaf"])
-        for name in tum_girilen_personeller:
-            info = TUM_PERSONEL_VERISI[name]
-            ws_ids.append([info["id"], name, info["birim"], info["muaf"]])
-        ws_ids.sheet_state = "hidden"
-
-        mikrobiyoloji_ek_excel_formlari(wb, yil, ay, tum_girilen_personeller, acil_nobet_dict)
-
-        output = BytesIO()
-        wb.save(output)
-        output.seek(0)
-        return output
+    personel_context = {"TUM_PERSONEL_VERISI": TUM_PERSONEL_VERISI, "gecmis_ay_kultur_ni": gecmis_ay_kultur_ni, "ilk_mesai_gunu": ilk_mesai_gunu, "gecmis_ay_son_gun_normal": gecmis_ay_son_gun_normal, "gecmis_ay_son_gun_acil": gecmis_ay_son_gun_acil, "gecmis_istatistik": gecmis_istatistik, "gecmis_acil_istatistik": gecmis_acil_istatistik, "gecmis_kultur8_istatistik": gecmis_kultur8_istatistik, "yil": yil, "ay": ay, "gun_sayisi": gun_sayisi, "birim_secimi": birim_secimi, "resmi_tatil_gunleri": resmi_tatil_gunleri, "yarim_gun_tatil_gunleri": yarim_gun_tatil_gunleri, "kultur_8s_tatil_gunleri": kultur_8s_tatil_gunleri, "nobetci_personeller": nobetci_personeller, "tum_girilen_personeller": tum_girilen_personeller, "takvim": dict(st.session_state.get("ortak_tarih_takvimi", {}))}
+    (generate_3_tab_excel, ortak_personel_gunluk_kayit, calculate_personel_puantaj_metrikleri,
+     is_day_off, calculate_aylik_calisma_saati, calculate_nobet_hakedis, kultur_ni_gunleri) = personel_hesap_motoru(personel_context)
 
     girdi_verisi = {
         "takvim": st.session_state.get("ortak_tarih_takvimi", {}),
@@ -2443,7 +2857,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     tarih = datetime.date(yil, ay, d)
                     pcr_list, mikro_list, kultur_list, kultur_8s_list = [], [], [], []
                     for p in nobetci_personeller:
-                        p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
+                        p_unit = context.get("gorev_birimleri", {}).get(f"{p}|{d}", TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro"))
                         is_24 = d in nobet_dict[p]
                         is_8s = d in kultur_8s_dict[p]
                         is_acil = d in acil_nobet_dict[p]
@@ -3280,3 +3694,7 @@ elif secilen_modul == "6. As. Dr. Puantaj Listesi":
             st.download_button("📥 Excel İndir",excel,file_name=f"As_Dr_Puantaj_{uyil}_{uay:02d}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",on_click="ignore")
         except Exception as exc:
             st.error(f"Puantaj oluşturulamadı: {exc}")
+
+
+elif secilen_modul == "7. Ay Sonu Düzenleme":
+    aysonu_ekrani()
