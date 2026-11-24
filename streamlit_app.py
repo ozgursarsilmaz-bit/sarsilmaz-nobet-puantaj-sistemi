@@ -2934,7 +2934,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
                     tarih = datetime.date(yil, ay, d)
                     pcr_list, mikro_list, kultur_list, kultur_8s_list = [], [], [], []
                     for p in nobetci_personeller:
-                        p_unit = context.get("gorev_birimleri", {}).get(f"{p}|{d}", TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro"))
+                        p_unit = TUM_PERSONEL_VERISI.get(p, {}).get("birim", "Mikro")
                         is_24 = d in nobet_dict[p]
                         is_8s = d in kultur_8s_dict[p]
                         is_acil = d in acil_nobet_dict[p]
