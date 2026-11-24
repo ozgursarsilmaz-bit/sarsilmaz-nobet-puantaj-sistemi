@@ -1235,6 +1235,41 @@ def aysonu_ekrani():
     if st.session_state.get('aysonu_aktarilmayan'):
         with st.expander('Bu aya / personel listesine alınmayan Excel kayıtları'):
             st.dataframe(pd.DataFrame(st.session_state['aysonu_aktarilmayan']),hide_index=True)
+    with st.expander('➕ Manuel izin / rapor ekle'):
+        with st.form(f'aysonu_manuel_izin_{rev}'):
+            ml1, ml2 = st.columns(2)
+            manual_person = ml1.selectbox('Personel', people, index=None, placeholder='Personel seçiniz')
+            manual_start = ml2.date_input('Başlangıç tarihi', value=datetime.date(c['yil'], c['ay'], 1), format='DD.MM.YYYY')
+            ml3, ml4 = st.columns(2)
+            manual_days = ml3.number_input('Gün sayısı', min_value=1, max_value=3660, value=1, step=1)
+            manual_code = ml4.selectbox('İzin / rapor kodu', AYSONU_KODLAR, index=None, placeholder='Kod seçiniz')
+            manual_note = st.text_input('Açıklama (isteğe bağlı)')
+            manual_add = st.form_submit_button('İzin / raporu tabloya ekle')
+        if manual_add:
+            try:
+                if manual_person is None or manual_code is None:
+                    raise ValueError('Personel ve izin / rapor kodunu seçiniz.')
+                first = datetime.date(c['yil'], c['ay'], 1)
+                last = datetime.date(c['yil'], c['ay'], c['gun_sayisi'])
+                if manual_start > last or manual_start + datetime.timedelta(days=int(manual_days)-1) < first:
+                    raise ValueError('İzin / rapor tarih aralığı seçili ayın en az bir gününü kapsamalıdır.')
+                new_leave = {'Personel': manual_person, 'Başlangıç': manual_start.isoformat(),
+                             'Gün Sayısı': int(manual_days), 'Kod': manual_code,
+                             'Kaynak Açıklama': manual_note.strip() or 'Manuel giriş'}
+                pending = st.session_state.get('aysonu_izin_taslak', state['izinler'])
+                # Excel kayıtları ve tabloda yapılan son düzenlemeler korunur.
+                _, normalized = aysonu_durum_haritasi(pending + [new_leave], c)
+                merged = aysonu_izin_birlestir(normalized[:-1], normalized[-1:])
+                state['izinler'] = merged
+                st.session_state['aysonu_izin_taslak'] = merged
+                state['gorevler'] = st.session_state.get('aysonu_gorev_taslak', state['gorevler'])
+                st.session_state['aysonu_manuel_bilgi'] = f'{manual_person}: izin / rapor kaydı tabloya eklendi.'
+                st.session_state['aysonu_rev'] = rev + 1
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+    if st.session_state.get('aysonu_manuel_bilgi'):
+        st.success(st.session_state.pop('aysonu_manuel_bilgi'))
     ld=pd.DataFrame(state['izinler'],columns=AYSONU_IZIN_SUTUNLARI)
     ld['Başlangıç']=pd.to_datetime(ld['Başlangıç']).dt.date
     edited=st.data_editor(ld,num_rows='dynamic',hide_index=True,use_container_width=True,key=f'aysonu_izin_editor_{rev}',
