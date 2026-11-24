@@ -1214,7 +1214,7 @@ def aysonu_ekrani():
             value=aysonu_mesai(c,nxt)
             status=st.selectbox(f'Sonraki ay ilk günü ({nxt:%d.%m.%Y}) mesai saati',[0,5,8],index=[0,5,8].index(value),key=f'aysonu_next_{rev}')
             c['takvim'][nxt.isoformat()]=status
-            c['ilk_mesai_gunu']=next((d for d in range(1,c['gun_sayisi']+1) if aysonu_mesai(c,datetime.date(c['yil'],c['ay'],d))>0),None)
+            c['ilk_mesai_gunu']=next((d for d in range(1,c['gun_sayisi']+1) if aysonu_mesai(c,datetime.date(c['yil'],c['ay'],d))==8),None)
     st.subheader(f"{c['ay']:02d}/{c['yil']} — İzin / rapor kayıtları")
     st.caption('Başlangıç + kullanılan gün sayısı esas alınır. Örnek: 2 Kasım, 5 gün → 2–6 Kasım. Tatiller dâhil takvim günleri işaretlenir; saat indirimi yalnız mesai günlerindedir.')
     leave_file=st.file_uploader('İzin / rapor Excel dosyası',type=['xlsx'],key='aysonu_izin_dosya')
@@ -1327,6 +1327,11 @@ def personel_hesap_motoru(context, durumlar=None):
     def ortak_gun_statusu(dt, yil, ay, tam_tatil=(), yarim_tatil=()):
         return aysonu_mesai(context, dt)
 
+    # Kültür Nİ devri yalnız tam 8 saatlik mesai gününde kullanılır.
+    ilk_mesai_gunu = next((d for d in range(1, context["gun_sayisi"] + 1)
+                          if ortak_gun_statusu(datetime.date(context["yil"], context["ay"], d),
+                                             context["yil"], context["ay"]) == 8), None)
+
     def is_day_off(yil, ay, day, resmi_tatil_gunleri):
         dt = datetime.date(yil, ay, day)
         return (dt.weekday() in [5, 6]) or (day in resmi_tatil_gunleri)
@@ -1359,7 +1364,7 @@ def personel_hesap_motoru(context, durumlar=None):
         ni_gunleri = set()
         for vardiya in vardiyalar:
             for day in range(vardiya + 1, gun_sayisi + 1):
-                if not is_day_off(yil, ay, day, resmi_tatil_gunleri):
+                if ortak_gun_statusu(datetime.date(yil, ay, day), yil, ay) == 8:
                     ni_gunleri.add(day)
                     break
         return ni_gunleri
@@ -1405,19 +1410,6 @@ def personel_hesap_motoru(context, durumlar=None):
                     norm_normal += n_saat
                     bayram_gece += bg_saat
                     bayram_normal += bn_saat
-
-        # Kültür 8s karşılığı Nİ sonraki aya kalıyorsa, bu 8s mevcut
-        # ayın ödeme hesabına girmez. Günlük hücrede 8 olarak kalır.
-        for vardiya in set(kultur_8s_vardiyalari or ()):
-            if str(p_row_dict.get(str(vardiya), "")).strip() == "8" and not kultur_ni_gunleri(
-                    yil, ay, gun_sayisi, {vardiya}, resmi_tatil_gunleri):
-                toplam_calisma -= 8
-
-        # Önceki ayın ödeme hesabından ayrılan Kültür 8s, bu ay Nİ
-        # kullanıldığında mesai karşılığı olarak eklenir; nöbet ücreti değildir.
-        if p_name in gecmis_ay_kultur_ni and ilk_mesai_gunu is not None:
-            if str(p_row_dict.get(str(ilk_mesai_gunu), "")).strip() == "Nİ":
-                toplam_calisma += 8
 
         # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
         is_devir_normal = p_name in gecmis_ay_son_gun_normal
@@ -1963,9 +1955,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     col_yil, col_ay = st.sidebar.columns(2)
 
     with col_yil:
-        yil = st.number_input("Yıl", value=2026, min_value=2024, max_value=2030, key="ayar_yil")
+        yil = st.number_input("Yıl", value=None, min_value=2024, max_value=2030, placeholder="Yıl giriniz", key="ayar_yil")
     with col_ay:
-        ay = st.selectbox("Ay", list(range(1, 13)), index=9, key="ayar_ay")
+        ay = st.selectbox("Ay", list(range(1, 13)), index=None, placeholder="Ay seçiniz", key="ayar_ay")
+
+    if yil is None or ay is None:
+        st.info("Başlamak için yıl ve ay seçiniz.")
+        st.stop()
 
     _, gun_sayisi = calendar.monthrange(yil, ay)
     gun_secenekleri = list(range(1, gun_sayisi + 1))
@@ -2353,10 +2349,11 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     gecmis_ay_kultur_ni = gecmis_ay_alani.multiselect(
         "🧫 Önceki Aydan Kültür 8s Nİ Devri:",
         options=nobetci_personeller, default=list(set(otomatik_kultur_ni)) if "ayar_kultur_ni" not in st.session_state else None,
-        help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk mesai gününe kalan personeller.",
+        help="Kültür 8s vardiyasının karşılığı olan Nİ bu ayın ilk tam 8 saatlik mesai gününe kalan personeller.",
      key="ayar_kultur_ni",)
     ilk_mesai_gunu = next((d for d in range(1, gun_sayisi + 1)
-                          if datetime.date(yil, ay, d).weekday() < 5 and d not in resmi_tatil_gunleri), None)
+                          if ortak_gun_statusu(datetime.date(yil, ay, d), yil, ay,
+                                               resmi_tatil_gunleri, yarim_gun_tatil_gunleri) == 8), None)
 
     gecmis_ay_son_gun_nobetcileri = list(set(gecmis_ay_son_gun_normal + gecmis_ay_son_gun_acil))
 
@@ -3390,9 +3387,13 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     st.sidebar.subheader("📅 Tarih ve Dönem Seçimi")
     col_egit_yil, col_egit_ay = st.sidebar.columns(2)
     with col_egit_yil:
-        egit_yil = st.number_input("Yıl", value=2026, min_value=2024, max_value=2030, key="egit_yil_input")
+        egit_yil = st.number_input("Yıl", value=None, min_value=2024, max_value=2030, placeholder="Yıl giriniz", key="egit_yil_input")
     with col_egit_ay:
-        egit_ay = st.selectbox("Ay", list(range(1, 13)), index=8, format_func=lambda x: f"{x}. Ay ({calendar.month_name[x]})", key="egit_ay_select")
+        egit_ay = st.selectbox("Ay", list(range(1, 13)), index=None, placeholder="Ay seçiniz", format_func=lambda x: f"{x}. Ay ({calendar.month_name[x]})", key="egit_ay_select")
+
+    if egit_yil is None or egit_ay is None:
+        st.info("Başlamak için yıl ve ay seçiniz.")
+        st.stop()
 
     _, egit_gun_sayisi = calendar.monthrange(egit_yil, egit_ay)
     egit_tum_tarihler = [datetime.date(egit_yil, egit_ay, d) for d in range(1, egit_gun_sayisi + 1)]
@@ -3707,8 +3708,11 @@ elif secilen_modul == "5. Uz. Dr. Puantaj Listesi":
     st.title("Uz. Dr. Puantaj Listesi")
     st.caption("L14 nöbetleri 24 olarak aktarılır; ertesi güne Nİ yazılır. Acil nöbet hesabı yoktur. Pazar: 12 saat gece + 4 saat normal.")
     c1,c2=st.columns(2)
-    uyil=int(c1.number_input("Yıl",min_value=2020,max_value=2100,value=datetime.date.today().year,key="up_yil"))
-    uay=int(c2.selectbox("Ay",list(range(1,13)),index=datetime.date.today().month-1,key="up_ay"))
+    uyil=c1.number_input("Yıl",min_value=2020,max_value=2100,value=None,placeholder="Yıl giriniz",key="up_yil")
+    uay=c2.selectbox("Ay",list(range(1,13)),index=None,placeholder="Ay seçiniz",key="up_ay")
+    if uyil is None or uay is None:
+        st.info("Başlamak için yıl ve ay seçiniz.")
+        st.stop()
     gunler=list(range(1,calendar.monthrange(uyil,uay)[1]+1))
     full, half = ortak_takvim_girisi(uyil, uay, st)
     uf=st.file_uploader("Uzman Dr. çalışma listesini yükleyin (.xlsx)",type=['xlsx'],key="up_upload")
@@ -3726,8 +3730,11 @@ elif secilen_modul == "6. As. Dr. Puantaj Listesi":
     st.title("As. Dr. Puantaj Listesi")
     st.caption("L6 nöbetleri 24 olarak aktarılır; ertesi güne Nİ yazılır. Acil nöbet hesabı yoktur. Pazar: 12 saat gece + 4 saat normal.")
     c1,c2=st.columns(2)
-    uyil=int(c1.number_input("Yıl",min_value=2020,max_value=2100,value=datetime.date.today().year,key="ap_yil"))
-    uay=int(c2.selectbox("Ay",list(range(1,13)),index=datetime.date.today().month-1,key="ap_ay"))
+    uyil=c1.number_input("Yıl",min_value=2020,max_value=2100,value=None,placeholder="Yıl giriniz",key="ap_yil")
+    uay=c2.selectbox("Ay",list(range(1,13)),index=None,placeholder="Ay seçiniz",key="ap_ay")
+    if uyil is None or uay is None:
+        st.info("Başlamak için yıl ve ay seçiniz.")
+        st.stop()
     gunler=list(range(1,calendar.monthrange(uyil,uay)[1]+1))
     full, half = ortak_takvim_girisi(uyil, uay, st)
     uf=st.file_uploader("Asistan Dr. çalışma listesini yükleyin (.xlsx)",type=['xlsx'],key="ap_upload")
