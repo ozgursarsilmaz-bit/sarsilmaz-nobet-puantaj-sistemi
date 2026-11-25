@@ -1446,6 +1446,28 @@ def personel_hesap_motoru(context, durumlar=None):
                     bayram_gece += bg_saat
                     bayram_normal += bn_saat
 
+        # Kültür 8s yalnız normal gündüz çalışmasıdır; acil hakedişe girmez.
+        # Çalışma ve Nİ farklı aylardaysa her hareket kendi ayında sayılır.
+        kultur_vardiyalari = {
+            d for d in set(kultur_8s_vardiyalari or ())
+            if str(p_row_dict.get(str(d), "")).strip() == "8"
+        }
+        norm_normal += 8 * len(kultur_vardiyalari)
+        kultur_ni = kultur_ni_gunleri(
+            yil, ay, gun_sayisi, kultur_vardiyalari, resmi_tatil_gunleri)
+        if p_name in gecmis_ay_kultur_ni and ilk_mesai_gunu is not None:
+            kultur_ni.add(ilk_mesai_gunu)
+        kultur_mahsup = sum(
+            8 for d in kultur_ni
+            if str(p_row_dict.get(str(d), "")).strip() == "Nİ"
+            and ortak_gun_statusu(datetime.date(yil, ay, d), yil, ay) == 8)
+        # Önce normal gündüz, yetmezse normal gece. Toplam çalışmadan
+        # tekrar düşülmez; günlük Nİ hücresi zaten sıfır saat sayılmıştır.
+        gunduz_dusum = min(norm_normal, kultur_mahsup)
+        norm_normal -= gunduz_dusum
+        kalan_kultur_mahsup = kultur_mahsup - gunduz_dusum
+        norm_gece -= min(norm_gece, kalan_kultur_mahsup)
+
         # 2. Akıllı Devir Nİ Mahsuplaşması (1. Gün Nİ Alan Personel)
         is_devir_normal = p_name in gecmis_ay_son_gun_normal
         is_devir_acil = p_name in gecmis_ay_son_gun_acil
