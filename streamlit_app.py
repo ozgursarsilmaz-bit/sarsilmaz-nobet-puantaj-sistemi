@@ -699,7 +699,7 @@ TUM_PERSONEL_VERISI = {
     "ŞENEL TAŞ": {"birim": "PCR", "muaf": False},
     "ŞENGÜL URLU": {"birim": "Mikro", "muaf": False},
     "ŞÜKRAN KAYA": {"birim": "Mikro", "muaf": False},
-    "ZOZAN ATLI": {"birim": "Kültür", "muaf": True},
+    "ZOZAN ATLI": {"birim": "Kültür", "muaf": False},
 }
 
 for _person, _info in TUM_PERSONEL_VERISI.items():
@@ -2077,13 +2077,27 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     if pending_change:
         old, new, record = pending_change
         changes = {old: new}
+        import re as personel_re
+        name_fields = {'ayar_personel', 'ayar_esnek', 'ayar_son_normal', 'ayar_son_acil',
+                       'ayar_kultur_ni', 'personel_kayitlari', 'gecmis_24s_tarihli_giris'}
         for key in list(st.session_state):
-            if key.startswith(('ayar_', 'm_', 'a_', 'p_', 'mazeret_', 'acil_', 'kisi_', 'gecmis_24s_', 'personel_kayitlari')) and key not in ('ayar_yukleme', 'ayar_onceki_excel'):
-                value = st.session_state[key]
-                if key == 'ayar_personel' and isinstance(value, str):
-                    value = '\n'.join(changes.get(' '.join(line.split()), line) for line in value.splitlines())
-                elif isinstance(value, (str, list, dict, tuple, set)):
-                    value = personel_adlarini_tasi(value, changes)
+            # Düğme ve dosya yükleyici değerleri programla atanamaz.
+            if key not in name_fields and not personel_re.fullmatch(r'(?:m_personel|a_personel|p_ana|p_yasakli)_\d+', key):
+                continue
+            original = st.session_state[key]
+            if key == 'ayar_personel' and isinstance(original, str):
+                value = '\n'.join(changes.get(' '.join(line.split()), line) for line in original.splitlines())
+            elif key == 'gecmis_24s_tarihli_giris' and isinstance(original, str):
+                lines = []
+                for line in original.splitlines():
+                    parts = line.split(';')
+                    if len(parts) == 3:
+                        parts[1] = changes.get(parts[1].strip(), parts[1])
+                    lines.append(';'.join(parts))
+                value = '\n'.join(lines)
+            else:
+                value = personel_adlarini_tasi(original, changes)
+            if value != original:
                 st.session_state[key] = value
         saved = st.session_state.setdefault('personel_kayitlari', {})
         saved.pop(old, None)
