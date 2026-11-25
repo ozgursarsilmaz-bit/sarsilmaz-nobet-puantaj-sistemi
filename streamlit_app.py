@@ -699,7 +699,7 @@ TUM_PERSONEL_VERISI = {
     "ŞENEL TAŞ": {"birim": "PCR", "muaf": False},
     "ŞENGÜL URLU": {"birim": "Mikro", "muaf": False},
     "ŞÜKRAN KAYA": {"birim": "Mikro", "muaf": False},
-    "ZOZAN ATLI": {"birim": "Kültür", "muaf": True},
+    "ZOZAN ATLI": {"birim": "Kültür", "muaf": False},
 }
 
 # --- ÖZEL CSS TASARIMI ---
