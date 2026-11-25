@@ -699,7 +699,7 @@ TUM_PERSONEL_VERISI = {
     "ŞENEL TAŞ": {"birim": "PCR", "muaf": False},
     "ŞENGÜL URLU": {"birim": "Mikro", "muaf": False},
     "ŞÜKRAN KAYA": {"birim": "Mikro", "muaf": False},
-    "ZOZAN ATLI": {"birim": "Kültür", "muaf": False},
+    "ZOZAN ATLI": {"birim": "Kültür", "muaf": True},
 }
 
 # --- ÖZEL CSS TASARIMI ---
@@ -950,6 +950,105 @@ def aysonu_izin_oku(data, personeller):
                          'Kaynak Açıklama':kind})
         except Exception as exc: raise ValueError(f'Excel satır {i+2}: {exc}') from exc
     return rows
+
+
+def egitici_isim_anahtari(value):
+    """Unvan ve noktalama farklarını kaldır; tam ad üzerinden eşleştir."""
+    import re
+    text = tr_norm(value)
+    text = re.sub(r"\b(profesor|prof|docent|doc|basasistan|uzman|uz|dr|doktor)\b", " ", text)
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text).split())
+
+
+def egitici_excel_engelleri(izin_data, puantaj_data, personeller, yil, ay):
+    import re
+    names = {}
+    for person in personeller:
+        key = egitici_isim_anahtari(person)
+        if not key or key in names:
+            raise ValueError('Eğitici adları boş veya aynı ada ait birden fazla kayıt var.')
+        names[key] = person
+    blocked = {p: set() for p in personeller}
+    notices = []
+    if izin_data:
+        rows = aysonu_izin_oku(izin_data, [])
+        unmatched = set()
+        for row in rows:
+            start = aysonu_tarih(row['Başlangıç'])
+            end = start + datetime.timedelta(days=row['Gün Sayısı'] - 1)
+            first = datetime.date(yil, ay, 1)
+            last = datetime.date(yil, ay, calendar.monthrange(yil, ay)[1])
+            if end < first or start > last:
+                continue
+            person = names.get(egitici_isim_anahtari(row['Personel']))
+            if person is None:
+                unmatched.add(row['Personel'])
+                continue
+            day = max(start, first)
+            while day <= min(end, last):
+                blocked[person].add(day)
+                day += datetime.timedelta(days=1)
+        if unmatched:
+            notices.append('İzin Excel’inde eğitici listesiyle eşleşmeyen adlar: ' + ', '.join(sorted(unmatched)))
+    if puantaj_data:
+        wb = openpyxl.load_workbook(BytesIO(puantaj_data), data_only=True)
+        sheets = [ws for ws in wb if 'puantaj' in tr_norm(ws.title)]
+        if len(sheets) != 1:
+            raise ValueError('Dosyada tek bir puantaj sayfası bulunmalıdır.')
+        ws = sheets[0]
+        period = None
+        # Uygulamanın uzman/asistan puantaj şablonundaki dönem hücreleri.
+        if isinstance(ws.cell(7, 48).value, (int, float)) and isinstance(ws.cell(8, 48).value, (int, float)):
+            period = (int(ws.cell(7, 48).value), int(ws.cell(8, 48).value))
+        elif 'Aylık Görev Listesi' in wb:
+            date = aysonu_tarih(wb['Aylık Görev Listesi'].cell(4, 1).value)
+            period = (date.year, date.month)
+        else:
+            months = ['ocak', 'subat', 'mart', 'nisan', 'mayis', 'haziran', 'temmuz', 'agustos', 'eylul', 'ekim', 'kasim', 'aralik']
+            title = tr_norm(' '.join(str(c.value or '') for row in ws.iter_rows(max_row=6) for c in row))
+            found = [(int(y), i + 1) for i, month in enumerate(months)
+                     for y in re.findall(r'(20\d{2})\s*' + month, title)]
+            if len(set(found)) == 1:
+                period = found[0]
+        if period != (yil, ay):
+            raise ValueError('Puantajın yılı/ayı seçili dönemle eşleşmiyor veya dönem bilgisi okunamadı.')
+        header = None
+        for row in ws.iter_rows(max_row=20):
+            for cell in row:
+                label = tr_norm(cell.value or '').replace(' ', '')
+                if label in ('adisoyadi', 'adsoyad', 'adsoyadi', 'personel'):
+                    days = {}
+                    for c in row:
+                        try:
+                            d = int(str(c.value).strip())
+                        except (ValueError, TypeError):
+                            continue
+                        if 1 <= d <= 31:
+                            days[d] = c.column
+                    if all(d in days for d in range(1, calendar.monthrange(yil, ay)[1] + 1)):
+                        header = (cell.row, cell.column, days)
+                        break
+            if header:
+                break
+        if header is None:
+            raise ValueError('Puantajda personel ve 1–31 gün başlıkları okunamadı.')
+        rownum, namecol, days = header
+        matched = set()
+        for row in ws.iter_rows(min_row=rownum + 1):
+            person = names.get(egitici_isim_anahtari(row[namecol - 1].value or ''))
+            if person is None:
+                continue
+            if person in matched:
+                raise ValueError(f'Puantajda aynı eğitici için birden fazla satır var: {person}')
+            matched.add(person)
+            for d in range(1, calendar.monthrange(yil, ay)[1] + 1):
+                code = tr_norm(row[days[d] - 1].value or '').replace(' ', '').replace('.', '')
+                if code in {tr_norm(k) for k in AYSONU_KODLAR + ['Nİ', 'İİ']}:
+                    blocked[person].add(datetime.date(yil, ay, d))
+        missing = set(personeller) - matched
+        if missing:
+            raise ValueError('Puantajda eşleşmeyen eğiticiler var; adları kontrol ediniz: ' + ', '.join(sorted(missing)))
+    return blocked, notices
 
 
 def aysonu_izin_birlestir(old, new):
@@ -2141,6 +2240,38 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
         tum_girilen_personeller.append(canonical)
     for mesaj in personel_hatalari:
         st.sidebar.error(mesaj)
+
+    with st.expander("👥 Personel Yönetimi — Muaf / Normal", expanded=False):
+        st.caption("Normal: nöbet dağıtımına katılır. Muaf: nöbet dağıtımına katılmaz; puantajda muaf personel kuralları uygulanır. Değişiklikler sonraki oluşturmalarda kullanılır. Kalıcı aktarım için ayar yedeğini indirin.")
+        if tum_girilen_personeller:
+            yonetim_rows = [{"Personel": p, "Birim": TUM_PERSONEL_VERISI[p]["birim"],
+                             "Durum": "Muaf" if TUM_PERSONEL_VERISI[p].get("muaf", False) else "Normal"}
+                            for p in tum_girilen_personeller]
+            yonetim_key = hashlib.sha256(json.dumps(yonetim_rows, ensure_ascii=False).encode()).hexdigest()[:16]
+            with st.form("personel_durum_form_" + yonetim_key):
+                yonetim_df = st.data_editor(
+                    pd.DataFrame(yonetim_rows), hide_index=True, use_container_width=True,
+                    disabled=["Personel", "Birim"], num_rows="fixed",
+                    column_config={"Durum": st.column_config.SelectboxColumn(
+                        "Nöbet Durumu", options=["Normal", "Muaf"], required=True)},
+                    key="personel_durum_editor_" + yonetim_key)
+                durum_kaydet = st.form_submit_button("Personel durumlarını kaydet")
+            if durum_kaydet:
+                if yonetim_df["Durum"].isin(["Normal", "Muaf"]).all():
+                    for _, row in yonetim_df.iterrows():
+                        person = row["Personel"]
+                        info = dict(TUM_PERSONEL_VERISI[person])
+                        info["muaf"] = row["Durum"] == "Muaf"
+                        TUM_PERSONEL_VERISI[person] = info
+                        kayitlar[person] = dict(info)
+                    st.session_state["personel_durum_kaydedildi"] = True
+                    st.rerun()
+                else:
+                    st.error("Her personel için Normal veya Muaf seçiniz.")
+            if st.session_state.pop("personel_durum_kaydedildi", False):
+                st.success("Personel durumları kaydedildi. Güncel durumlarla listeyi yeniden oluşturabilirsiniz.")
+        else:
+            st.info("Önce personel listesine en az bir geçerli personel ekleyiniz.")
 
     nobetci_personeller = [
         p
@@ -3479,6 +3610,23 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     st.markdown('<div class="section-title">🏖️ Hekim Bazlı İzinli Gün Seçimi</div>', unsafe_allow_html=True)
     st.info("💡 Hekimlerin izinli/görevli olduğu günleri seçiniz. Teorik dersler haftalara eşit dağıtılacak ve çıktı orijinal Excel şablonunuzla birebir aynı formatta üretilecektir.")
 
+    st.subheader("İzin ve puantaj Excel yükleme")
+    egit_izin_file = st.file_uploader("İzin / rapor Excel dosyası (ay sonu ile aynı format)", type=['xlsx'], key='egit_izin_excel')
+    egit_puantaj_file = st.file_uploader("İlgili aya ait hekim puantaj Excel dosyası", type=['xlsx'], key='egit_puantaj_excel')
+    st.caption("Excel izinleri, puantajdaki Nİ / izin kodları ve aşağıda elle seçilen günler birleştirilir. Bu günlerde pratik ve teorik eğitim saatleri boş kalır.")
+    egit_import_error = False
+    try:
+        egit_excel_izinler, egit_notices = egitici_excel_engelleri(
+            egit_izin_file.getvalue() if egit_izin_file else None,
+            egit_puantaj_file.getvalue() if egit_puantaj_file else None,
+            egitici_listesi, egit_yil, egit_ay)
+        for notice in egit_notices:
+            st.warning(notice)
+    except Exception as exc:
+        egit_import_error = True
+        egit_excel_izinler = {}
+        st.error(str(exc))
+
     egitici_izinler = {}
     for idx, egitici in enumerate(egitici_listesi):
         with st.expander(f"🔴 {egitici} - İzin Günleri Tanımla", expanded=False):
@@ -3488,7 +3636,16 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 format_func=lambda d: f"{d.strftime('%d.%m.%Y')} ({tr_gunler[d.weekday()]})",
                 key=f"egit_leave_{idx}_{egitici}"
             )
-            egitici_izinler[egitici] = set(selected_leaves)
+            imported = egit_excel_izinler.get(egitici, set())
+            if imported:
+                st.caption("Excel’den alınan izin / Nİ günleri: " + ', '.join(d.strftime('%d.%m.%Y') for d in sorted(imported)))
+            egitici_izinler[egitici] = set(selected_leaves) | imported
+
+    egit_signature = hashlib.sha256(repr((egit_yil, egit_ay, egitici_listesi,
+        [(p, sorted(days)) for p, days in egitici_izinler.items()], egit_import_error)).encode()).hexdigest()
+    if st.session_state.get('egit_signature') != egit_signature:
+        st.session_state.pop('egitici_sonuc', None)
+        st.session_state['egit_signature'] = egit_signature
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -3638,7 +3795,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
         output_e.seek(0)
         return output_e
 
-    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt"):
+    if st.button("🚀 Eğitici Destekleme Çizelgesini Oluştur ve Dağıt", disabled=egit_import_error or not egitici_listesi):
         egitici_results = {}
         hesaplama_hatalari = []
 
@@ -3748,7 +3905,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
                 m3.metric("Aktif Çalışılan Gün", f"{len(df_show[(df_show['Pratik']>0) | (df_show['Teorik']>0)])} Gün")
 
                 st.dataframe(
-                    df_show[["Tarih", "Gün Adı", "Pratik", "Teorik"]],
+                    df_show[["Tarih", "Gün Adı", "Pratik", "Teorik"]].replace({"Pratik": {0: ""}, "Teorik": {0: ""}}),
                     use_container_width=True,
                     height=380
                 )
