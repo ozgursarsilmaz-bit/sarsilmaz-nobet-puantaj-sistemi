@@ -666,7 +666,7 @@ if "hesaplanan_sonuc" not in st.session_state:
 # --- TAM PERSONEL VERİTABANI ---
 TUM_PERSONEL_VERISI = {
     "ÖZGÜR SARSILMAZ": {"birim": "Mikro", "muaf": False},
-    "AYSEL BOZAN": {"birim": "Mikro", "muaf": True},
+    "AYSEL BOZAN": {"birim": "Mikro", "muaf": False},
     "AYŞEGÜL SARUHAN": {"birim": "Kültür", "muaf": True},
     "BELGİN PARİN": {"birim": "Mikro", "muaf": True},
     "BELGİN UYSAL": {"birim": "PCR", "muaf": False},
@@ -699,7 +699,7 @@ TUM_PERSONEL_VERISI = {
     "ŞENEL TAŞ": {"birim": "PCR", "muaf": False},
     "ŞENGÜL URLU": {"birim": "Mikro", "muaf": False},
     "ŞÜKRAN KAYA": {"birim": "Mikro", "muaf": False},
-    "ZOZAN ATLI": {"birim": "Kültür", "muaf": True},
+    "ZOZAN ATLI": {"birim": "Kültür", "muaf": False},
 }
 
 for _person, _info in TUM_PERSONEL_VERISI.items():
