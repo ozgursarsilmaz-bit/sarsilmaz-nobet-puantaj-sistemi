@@ -372,6 +372,10 @@ def bayram_saat_ayrimi(yil, ay, day, gece, normal, tam_tatil=(), yarim_tatil=())
     total = gece + normal
     def holiday(t):
         d = t.date()
+        # Genel tatil olmak bayram artırımı doğurmaz. Mesai/tatil takvimi
+        # korunur; bu tarihler yalnız ücretin bayram kategorisinden çıkarılır.
+        if (d.month, d.day) in {(1, 1), (5, 1), (7, 15)}:
+            return False
         if (d.year,d.month) == (yil,ay):
             return d.day in full or (d.day in half and t.hour >= 13)
         saved = st.session_state.get("ortak_takvim_secimleri", {}).get(f"{d.year:04d}-{d.month:02d}")
@@ -1528,6 +1532,60 @@ def aysonu_ekrani():
         file_name=f"Ay_Sonu_Taslak_{c['yil']}_{c['ay']:02d}.json",mime='application/json',on_click='ignore')
 
 
+def mazeret_sabit_excel_sekmesi(wb, context):
+    """Dağıtım öncesi girilen talepleri göster; gerçekleşen görevlerden türetme."""
+    name = 'Mazeret ve Sabit Nöbet'
+    if name in wb:
+        del wb[name]
+    ws = wb.create_sheet(name)
+    ws.merge_cells('A1:D1')
+    ws['A1'] = f"{context['ay']:02d}/{context['yil']} — Mazeret ve Sabit Nöbet Girişleri"
+    ws['A1'].font = Font(name='Calibri', size=13, bold=True, color='FFFFFF')
+    ws['A1'].fill = PatternFill('solid', fgColor='2459A8')
+    ws.merge_cells('A2:D2')
+    ws['A2'] = 'Dağıtım öncesinde girilen taleplerdir. Gerçekleşen görevler Aylık Görev Listesi sekmesindedir.'
+    ws['A2'].alignment = Alignment(wrap_text=True, vertical='center')
+    ws.row_dimensions[2].height = 30
+    ws.append([])
+    for col, value in enumerate(['Personel', 'Birim', 'Nöbet Yazılmayacak Günler', 'Sabit Nöbet Günleri'], 1):
+        cell = ws.cell(4, col, value)
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='2459A8')
+        cell.alignment = Alignment(wrap_text=True, vertical='center')
+    records = context.get('mazeret_sabit_girdileri')
+    if records is None:
+        ws.merge_cells('A5:D5')
+        ws['A5'] = 'Bu eski dosyada başlangıç mazeret/sabit nöbet girişleri saklanmamış.'
+    elif not records:
+        ws.merge_cells('A5:D5')
+        ws['A5'] = 'Bu dönem için mazeret veya sabit nöbet günü girilmedi.'
+    else:
+        for record in records:
+            person = record['Personel']
+            unit = context['TUM_PERSONEL_VERISI'].get(person, {}).get('birim', '')
+            def dates(key):
+                return ', '.join(datetime.date(context['yil'], context['ay'], day).strftime('%d.%m.%Y')
+                                 for day in sorted(set(record.get(key, [])))) or '—'
+            ws.append([person, unit, dates('Nöbet Yazılmayacak Günler'), dates('Sabit Nöbet Günleri')])
+    for row in ws.iter_rows(min_row=5):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            cell.font = Font(name='Calibri', size=11)
+        ws.row_dimensions[row[0].row].height = 42
+    for col, width in [('A', 31), ('B', 15), ('C', 58), ('D', 48)]:
+        ws.column_dimensions[col].width = width
+    ws.freeze_panes = 'C5'
+    ws.auto_filter.ref = f'A4:D{max(4, ws.max_row)}'
+    ws.sheet_view.showGridLines = False
+    ws.print_title_rows = '1:4'
+    ws.print_area = f'A1:D{ws.max_row}'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+
 def personel_hesap_motoru(context, durumlar=None):
     TUM_PERSONEL_VERISI = context["TUM_PERSONEL_VERISI"]
     gecmis_ay_kultur_ni = context["gecmis_ay_kultur_ni"]
@@ -2042,6 +2100,7 @@ def personel_hesap_motoru(context, durumlar=None):
         ws_ids.sheet_state = "hidden"
 
         mikrobiyoloji_ek_excel_formlari(wb, yil, ay, tum_girilen_personeller, acil_nobet_dict, TUM_PERSONEL_VERISI)
+        mazeret_sabit_excel_sekmesi(wb, context)
         aysonu_json_yaz(wb, "Ay Sonu Bağlam", context)
 
         output = BytesIO()
@@ -2245,7 +2304,7 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
     col_yil, col_ay = st.sidebar.columns(2)
 
     with col_yil:
-        yil = st.number_input("Yıl", value=None, min_value=2024, max_value=2030, placeholder="Yıl giriniz", key="ayar_yil")
+        yil = st.selectbox("Yıl", list(range(2024, 2031)), index=None, placeholder="Yıl seçiniz", key="ayar_yil")
     with col_ay:
         ay = st.selectbox("Ay", list(range(1, 13)), index=None, placeholder="Ay seçiniz", key="ayar_ay")
 
@@ -2808,6 +2867,13 @@ if secilen_modul == "1. Personel Nöbet & Puantaj":
             file_name=f"Nobet_Ayarlari_{yil}_{ay:02d}.json", mime="application/json")
 
     personel_context = {"personel_yonetim_listesi": yonetim_tum_personeller, "TUM_PERSONEL_VERISI": TUM_PERSONEL_VERISI, "gecmis_ay_kultur_ni": gecmis_ay_kultur_ni, "ilk_mesai_gunu": ilk_mesai_gunu, "gecmis_ay_son_gun_normal": gecmis_ay_son_gun_normal, "gecmis_ay_son_gun_acil": gecmis_ay_son_gun_acil, "gecmis_istatistik": gecmis_istatistik, "gecmis_acil_istatistik": gecmis_acil_istatistik, "gecmis_kultur8_istatistik": gecmis_kultur8_istatistik, "yil": yil, "ay": ay, "gun_sayisi": gun_sayisi, "birim_secimi": birim_secimi, "resmi_tatil_gunleri": resmi_tatil_gunleri, "yarim_gun_tatil_gunleri": yarim_gun_tatil_gunleri, "kultur_8s_tatil_gunleri": kultur_8s_tatil_gunleri, "nobetci_personeller": nobetci_personeller, "tum_girilen_personeller": tum_girilen_personeller, "takvim": dict(st.session_state.get("ortak_tarih_takvimi", {}))}
+    personel_context['mazeret_sabit_girdileri'] = [
+        {'Personel': person,
+         'Nöbet Yazılmayacak Günler': sorted({day + 1 for day in izinler.get(person, [])}),
+         'Sabit Nöbet Günleri': sorted({day + 1 for day in sabit_nobetler.get(person, [])})}
+        for person in nobetci_personeller
+        if izinler.get(person) or sabit_nobetler.get(person)
+    ]
     (generate_3_tab_excel, ortak_personel_gunluk_kayit, calculate_personel_puantaj_metrikleri,
      is_day_off, calculate_aylik_calisma_saati, calculate_nobet_hakedis, kultur_ni_gunleri) = personel_hesap_motoru(personel_context)
 
@@ -3699,7 +3765,7 @@ elif secilen_modul == "4. Eğitici Destekleme Puan Çizelgesi":
     st.sidebar.subheader("📅 Tarih ve Dönem Seçimi")
     col_egit_yil, col_egit_ay = st.sidebar.columns(2)
     with col_egit_yil:
-        egit_yil = st.number_input("Yıl", value=None, min_value=2024, max_value=2030, placeholder="Yıl giriniz", key="egit_yil_input")
+        egit_yil = st.selectbox("Yıl", list(range(2024, 2031)), index=None, placeholder="Yıl seçiniz", key="egit_yil_input")
     with col_egit_ay:
         egit_ay = st.selectbox("Ay", list(range(1, 13)), index=None, placeholder="Ay seçiniz", format_func=lambda x: f"{x}. Ay ({calendar.month_name[x]})", key="egit_ay_select")
 
@@ -4046,7 +4112,7 @@ elif secilen_modul == "5. Uz. Dr. Puantaj Listesi":
     st.title("Uz. Dr. Puantaj Listesi")
     st.caption("L14 nöbetleri 24 olarak aktarılır; ertesi güne Nİ yazılır. Acil nöbet hesabı yoktur. Pazar: 12 saat gece + 4 saat normal.")
     c1,c2=st.columns(2)
-    uyil=c1.number_input("Yıl",min_value=2020,max_value=2100,value=None,placeholder="Yıl giriniz",key="up_yil")
+    uyil=c1.selectbox("Yıl",list(range(2020,2101)),index=None,placeholder="Yıl seçiniz",key="up_yil")
     uay=c2.selectbox("Ay",list(range(1,13)),index=None,placeholder="Ay seçiniz",key="up_ay")
     if uyil is None or uay is None:
         st.info("Başlamak için yıl ve ay seçiniz.")
@@ -4068,7 +4134,7 @@ elif secilen_modul == "6. As. Dr. Puantaj Listesi":
     st.title("As. Dr. Puantaj Listesi")
     st.caption("L6 nöbetleri 24 olarak aktarılır; ertesi güne Nİ yazılır. Acil nöbet hesabı yoktur. Pazar: 12 saat gece + 4 saat normal.")
     c1,c2=st.columns(2)
-    uyil=c1.number_input("Yıl",min_value=2020,max_value=2100,value=None,placeholder="Yıl giriniz",key="ap_yil")
+    uyil=c1.selectbox("Yıl",list(range(2020,2101)),index=None,placeholder="Yıl seçiniz",key="ap_yil")
     uay=c2.selectbox("Ay",list(range(1,13)),index=None,placeholder="Ay seçiniz",key="ap_ay")
     if uyil is None or uay is None:
         st.info("Başlamak için yıl ve ay seçiniz.")
